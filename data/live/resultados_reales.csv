@@ -1,0 +1,73 @@
+group,equipo1,equipo2,g1,g2
+A,Mexico,South Korea,NA,NA
+A,Mexico,Czech Republic,NA,NA
+A,Mexico,South Africa,2,0
+A,South Korea,Czech Republic,2,1
+A,South Korea,South Africa,NA,NA
+A,Czech Republic,South Africa,NA,NA
+B,Canada,Bosnia and Herzegovina,2,1
+B,Canada,Qatar,NA,NA
+B,Canada,Switzerland,NA,NA
+B,Bosnia and Herzegovina,Qatar,NA,NA
+B,Bosnia and Herzegovina,Switzerland,NA,NA
+B,Qatar,Switzerland,NA,NA
+C,Brazil,Morocco,NA,NA
+C,Brazil,Haiti,NA,NA
+C,Brazil,Scotland,NA,NA
+C,Morocco,Haiti,NA,NA
+C,Morocco,Scotland,NA,NA
+C,Haiti,Scotland,NA,NA
+D,United States,Paraguay,4,1
+D,United States,Australia,NA,NA
+D,United States,Turkey,NA,NA
+D,Paraguay,Australia,NA,NA
+D,Paraguay,Turkey,NA,NA
+D,Australia,Turkey,NA,NA
+E,Germany,Curaçao,NA,NA
+E,Germany,Ivory Coast,NA,NA
+E,Germany,Ecuador,NA,NA
+E,Curaçao,Ivory Coast,NA,NA
+E,Curaçao,Ecuador,NA,NA
+E,Ivory Coast,Ecuador,NA,NA
+F,Netherlands,Japan,NA,NA
+F,Netherlands,Sweden,NA,NA
+F,Netherlands,Tunisia,NA,NA
+F,Japan,Sweden,NA,NA
+F,Japan,Tunisia,NA,NA
+F,Sweden,Tunisia,NA,NA
+G,Belgium,Egypt,NA,NA
+G,Belgium,Iran,NA,NA
+G,Belgium,New Zealand,NA,NA
+G,Egypt,Iran,NA,NA
+G,Egypt,New Zealand,NA,NA
+G,Iran,New Zealand,NA,NA
+H,Spain,Cape Verde,NA,NA
+H,Spain,Saudi Arabia,NA,NA
+H,Spain,Uruguay,NA,NA
+H,Cape Verde,Saudi Arabia,NA,NA
+H,Cape Verde,Uruguay,NA,NA
+H,Saudi Arabia,Uruguay,NA,NA
+I,France,Senegal,NA,NA
+I,France,Iraq,NA,NA
+I,France,Norway,NA,NA
+I,Senegal,Iraq,NA,NA
+I,Senegal,Norway,NA,NA
+I,Iraq,Norway,NA,NA
+J,Argentina,Algeria,NA,NA
+J,Argentina,Austria,NA,NA
+J,Argentina,Jordan,NA,NA
+J,Algeria,Austria,NA,NA
+J,Algeria,Jordan,NA,NA
+J,Austria,Jordan,NA,NA
+K,Portugal,DR Congo,NA,NA
+K,Portugal,Uzbekistan,NA,NA
+K,Portugal,Colombia,NA,NA
+K,DR Congo,Uzbekistan,NA,NA
+K,DR Congo,Colombia,NA,NA
+K,Uzbekistan,Colombia,NA,NA
+L,England,Croatia,NA,NA
+L,England,Ghana,NA,NA
+L,England,Panama,NA,NA
+L,Croatia,Ghana,NA,NA
+L,Croatia,Panama,NA,NA
+L,Ghana,Panama,NA,NA

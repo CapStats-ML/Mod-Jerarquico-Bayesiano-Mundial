@@ -1,0 +1,392 @@
+\documentclass[12pt, a4paper]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[spanish]{babel}
+\usepackage{amsmath, amssymb}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage{hyperref}
+\usepackage{geometry}
+\usepackage{setspace}
+\usepackage{parskip}
+\usepackage{natbib}
+\usepackage{float}
+\usepackage{array}
+\usepackage{multirow}
+\usepackage{caption}
+
+\geometry{margin=2.5cm}
+\onehalfspacing
+
+\hypersetup{
+  colorlinks=true,
+  linkcolor=blue,
+  urlcolor=blue,
+  citecolor=blue
+}
+
+\title{\textbf{Predicción de Resultados del Mundial FIFA 2026} \\[0.5em]
+\large Un Modelo Bayesiano Jerárquico Binomial Negativo con Ponderación Temporal y Ratings Elo}
+
+\author{Carlos Prieto \\ \small UBITS}
+
+\date{\today}
+
+% ─────────────────────────────────────────────────────────────────────────────
+\begin{document}
+
+\maketitle
+\tableofcontents
+\newpage
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Introducción}
+
+Este trabajo desarrolla un pipeline estadístico completo para predecir los resultados de la Copa del Mundo FIFA 2026. El objetivo es simular tanto la fase de grupos como las rondas eliminatorias, obteniendo distribuciones de probabilidad sobre los posibles clasificados, campeones y resultados individuales de cada partido.
+
+El enfoque adoptado es el de los modelos de conteo jerárquicos para marcadores de fútbol, introducido formalmente en su versión Poisson por \citet{Dixon1997} y aquí extendido a una familia Binomial Negativa para capturar la sobredispersión característica de los datos de goles y extendido en múltiples trabajos posteriores. La inferencia se realiza en el marco bayesiano completo usando cadenas de Markov Monte Carlo (MCMC) a través de la librería \texttt{brms} \citep{Burkner2017}, que genera código Stan automáticamente. Esto permite obtener distribuciones posteriores completas sobre todos los parámetros del modelo, no solo estimaciones puntuales.
+
+Las decisiones metodológicas centrales fueron tres. Primero, incluir ponderación temporal exponencial de los partidos históricos para que los resultados recientes tengan más peso que los lejanos. Segundo, incorporar ratings Elo calculados sobre el historial completo desde 1872 como covariable fija del modelo, lo que permite al modelo separar la calidad intrínseca de un equipo (capturada por el Elo) de su sobre- o sub-desempeño histórico (capturado por los efectos aleatorios). Tercero, entrenar el modelo únicamente con partidos entre equipos clasificados al Mundial 2026 (\textit{Modelo B}), reduciendo el ruido que introducen resultados de selecciones de bajo nivel.
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Fuentes de Datos y Minería}
+
+\subsection{Historial completo de partidos internacionales}
+
+La fuente principal de entrenamiento es el repositorio público de \citet{martj42}, disponible en GitHub, que contiene aproximadamente 49.477 partidos de fútbol internacional desde 1872 hasta la fecha. Las columnas relevantes son: \texttt{date}, \texttt{home\_team}, \texttt{away\_team}, \texttt{home\_score}, \texttt{away\_score}, \texttt{tournament} y \texttt{neutral} (indicador de sede neutral). Este dataset se descarga directamente desde la URL raw del repositorio usando la librería \texttt{httr2} en R.
+
+\subsection{Equipos clasificados al Mundial 2026}
+
+Los 48 equipos clasificados y su asignación a grupos se obtuvieron por \textit{data mining} desde la página de clasificaciones de ESPN (\texttt{espn.com/soccer/standings/\_/league/FIFA.WORLD}). Se extrajeron los atributos \texttt{href} de los enlaces de cada equipo, que contienen un identificador numérico de ESPN y un slug textual (e.g., \texttt{id/206/canada}). Esto permite construir un mapa \textit{id $\to$ slug} sin necesidad de hardcodear ningún identificador manualmente.
+
+\subsection{Normalización de nombres}
+
+Las dos fuentes usan convenciones de nombres distintas. El historial de \citet{martj42} usa nombres históricos en inglés (e.g., \textit{Czech Republic}, \textit{Turkey}), mientras que ESPN usa nombres actualizados (e.g., \textit{Czechia}, \textit{Türkiye}). Se construyó una tabla de correspondencia manual validada contra el conjunto de nombres únicos del historial:
+
+\begin{table}[H]
+\centering
+\caption{Muestra de correcciones de nombres aplicadas}
+\begin{tabular}{ll}
+\toprule
+\textbf{Nombre ESPN} & \textbf{Nombre en historial} \\
+\midrule
+Czechia              & Czech Republic \\
+Bosnia Herzegovina   & Bosnia and Herzegovina \\
+Turkiye              & Turkey \\
+Curacao              & Curaçao \\
+Congo Dr             & DR Congo \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Preprocesamiento y Construcción del Dataset}
+
+\subsection{Filtrado y formato largo}
+
+Del historial completo se retienen únicamente los partidos que cumplen tres condiciones: (1) fecha igual o posterior al 1 de enero de 2010, lo que cubre cuatro ciclos completos de clasificatorias y cuatro Mundiales como contexto de entrenamiento; (2) al menos uno de los dos equipos es clasificado al Mundial 2026; (3) ambos marcadores están disponibles (sin resultados nulos o suspendidos).
+
+El dataset resultante contiene 7.366 partidos únicos. Se transforma a \textit{formato largo}, generando una fila por cada perspectiva equipo-partido: el equipo local aporta una fila con \texttt{equipo = home\_team}, \texttt{rival = away\_team}, \texttt{goles = home\_score}, y el visitante aporta otra fila simétrica. El dataset final tiene 14.732 filas.
+
+\subsection{Ponderación temporal}
+
+Siguiendo a \citet{Dixon1997}, cada partido recibe un peso que decae exponencialmente con el tiempo:
+
+\begin{equation}
+w_t = \exp\!\left(-\frac{\log 2}{\tau} \cdot \delta_t\right)
+\end{equation}
+
+donde $\delta_t$ es la cantidad de días transcurridos desde el partido hasta la fecha de referencia, y $\tau = 365$ días es el parámetro de semivida: un partido de hace exactamente un año vale la mitad que uno de hoy.
+
+\subsection{Multiplicador por tipo de torneo}
+
+Adicionalmente, los pesos se escalan por la importancia del torneo:
+
+\begin{table}[H]
+\centering
+\caption{Multiplicadores por tipo de competencia}
+\begin{tabular}{lc}
+\toprule
+\textbf{Tipo de torneo} & \textbf{Multiplicador} \\
+\midrule
+Copa del Mundo FIFA (fases finales) & 2.0 \\
+Eliminatorias / clasificatorias      & 1.5 \\
+Otros competitivos                   & 1.0 \\
+Amistosos                            & 0.5 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+El peso compuesto de cada observación es $p_i = w_t \cdot m_{\text{torneo}}$. El rango observado en los datos es $[0.0000,\, 1.9962]$.
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Ratings Elo}
+
+\subsection{Motivación}
+
+Una limitación identificada en las versiones iniciales del modelo fue que selecciones de CONCACAF (como Haití o Curazao) aparecían sobreestimadas en el ranking de ataque, dado que sus altas tasas de gol contra micro-selecciones en eliminatorias quedaban capturadas por los efectos aleatorios de ataque. El modelo no podía distinguir entre ``este equipo es bueno en ataque'' y ``este equipo goleó a rivales muy débiles''.
+
+La solución adoptada fue incorporar los ratings Elo como covariable fija: la diferencia de Elo explica estructuralmente cuántos goles extra se esperan debido a la brecha de calidad entre los equipos, liberando los efectos aleatorios para capturar solo las desviaciones respecto a esa predicción base.
+
+\subsection{Cálculo}
+
+Los ratings Elo se calculan sobre la totalidad del historial (49.477 partidos desde 1872), en orden cronológico, con todas las selecciones iniciando en 1500 puntos. La fórmula de actualización es la estándar:
+
+\begin{equation}
+R'_A = R_A + K \cdot G \cdot (S_A - E_A)
+\end{equation}
+
+donde $S_A \in \{1, 0.5, 0\}$ es el resultado real, $E_A = 1/(1 + 10^{(R_B - R_A - h)/400})$ es la probabilidad esperada de victoria (con ventaja de local $h = 100$ en sedes no neutrales, $h = 0$ en neutrales), $K$ es el factor de importancia del partido, y $G$ es un multiplicador por diferencia de goles:
+
+\begin{equation}
+G(\Delta g) = \begin{cases} 1.0 & \text{si } \Delta g \leq 1 \\ 1.5 & \text{si } \Delta g = 2 \\ (11 + \Delta g)/8 & \text{si } \Delta g \geq 3 \end{cases}
+\end{equation}
+
+Los factores $K$ se definen según el tipo de torneo:
+
+\begin{table}[H]
+\centering
+\caption{Factor $K$ por tipo de competencia}
+\begin{tabular}{lc}
+\toprule
+\textbf{Competencia} & \textbf{$K$} \\
+\midrule
+Copa del Mundo FIFA (fase final) & 60 \\
+Campeonatos continentales        & 50 \\
+Eliminatorias mundialistas       & 40 \\
+Otros competitivos               & 35 \\
+Amistosos                        & 20 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Al final del proceso, el rango de ratings Elo para los 48 equipos clasificados al Mundial 2026 es $[1560,\, 2214]$, con una media de aproximadamente 1800 puntos.
+
+\subsection{Incorporación al modelo}
+
+En el dataset de entrenamiento, la covariable se define como:
+
+\begin{equation}
+\texttt{elo\_diff}_i = \frac{\text{Elo}_{\text{equipo},i} - \text{Elo}_{\text{rival},i}}{400}
+\end{equation}
+
+La división por 400 pone la variable en una escala aproximada $[-3, 3]$, compatible con los priors del modelo. Un valor positivo indica que el equipo es más fuerte que su rival según el Elo.
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Modelo Estadístico}
+
+\subsection{Especificación}
+
+Se adopta el modelo de Poisson jerárquico de \citet{Dixon1997} en su versión bayesiana completa, extendido con una familia Binomial Negativa para acomodar la sobredispersión observada en los recuentos de goles (varianza empírica $>$ media). Para cada observación $i$ (partido visto desde la perspectiva de un equipo), los goles anotados siguen:
+
+\begin{equation}
+\text{Goles}_i \sim \text{NegBin}(\lambda_i,\, \phi)
+\end{equation}
+
+donde $\phi > 0$ es el parámetro de forma (precisión): a mayor $\phi$, la distribución se acerca a Poisson; a menor $\phi$, la sobredispersión es más pronunciada. La varianza es $\text{Var}(\text{Goles}_i) = \lambda_i + \lambda_i^2 / \phi$. El predictor lineal es idéntico al modelo de Poisson:
+
+\begin{equation}
+\log \lambda_i = \mu + \alpha_{\text{equipo}[i]} - \delta_{\text{rival}[i]} + \eta \cdot \mathbb{1}[\text{local}]_i + \beta \cdot \texttt{elo\_diff}_i
+\end{equation}
+
+donde:
+\begin{itemize}
+  \item $\mu$ es el intercepto global (log de la tasa media de goles de un equipo promedio en condición neutral),
+  \item $\alpha_k \sim \mathcal{N}(0, \sigma_\alpha)$ es el efecto aleatorio de ataque del equipo $k$,
+  \item $\delta_k \sim \mathcal{N}(0, \sigma_\delta)$ es el efecto aleatorio de defensa del equipo $k$ (como rival),
+  \item $\eta$ es el coeficiente de ventaja de local,
+  \item $\beta$ es el coeficiente de la diferencia de Elo escalada.
+\end{itemize}
+
+Nótese que $\alpha$ y $\delta$ comparten la misma especificación de hiperparámetros ($\sigma$), implementada en \texttt{brms} como efectos aleatorios agrupados por \texttt{(1 | equipo)} y \texttt{(1 | rival)} respectivamente. El parámetro $\phi$ recibe un prior por defecto de \texttt{brms} (\textit{half-Cauchy} con escala 1) que permite al modelo adaptarse libremente al nivel de sobredispersión presente en los datos.
+
+\subsection{Priors}
+
+Los priors reflejan conocimiento de dominio sobre el fútbol internacional:
+
+\begin{align}
+\mu &\sim \mathcal{N}(0.3,\, 0.5) \\
+\eta &\sim \mathcal{N}(0.2,\, 0.3) \\
+\beta &\sim \mathcal{N}(0,\, 0.3) \\
+\sigma_\alpha, \sigma_\delta &\sim \mathcal{N}^+(0,\, 0.3)
+\end{align}
+
+El prior sobre $\mu$ se centra en $0.3$ porque $\exp(0.3) \approx 1.35$ goles por partido, valor razonable para equipos de nivel internacional. El prior sobre $\eta$ se centra en $0.2$ porque $\exp(0.2) \approx 1.22$, es decir, aproximadamente un 22\% más de goles jugando de local. El prior sobre $\beta$ es neutral en cero, dejando que los datos determinen la dirección y magnitud del efecto Elo. Las desviaciones estándar de los efectos aleatorios tienen priors half-normal en $0.3$, lo que corresponde a diferencias de ataque/defensa moderadas entre selecciones nacionales.
+
+\subsection{Variantes del modelo}
+
+Se ajustaron dos variantes:
+
+\begin{itemize}
+  \item \textbf{Modelo A}: entrenado con todos los 14.732 registros (213 equipos distintos). Captura mayor cantidad de observaciones pero incluye equipos de bajo nivel que pueden distorsionar los efectos aleatorios de los clasificados.
+  \item \textbf{Modelo B}: entrenado únicamente con los 3.870 registros donde ambos equipos son clasificados al Mundial 2026 (1.935 partidos únicos entre los 48). Menor cantidad de datos pero señal más limpia y directamente relevante para las predicciones del torneo.
+\end{itemize}
+
+Se eligió el \textbf{Modelo B} para las simulaciones finales por dos razones. Primero, la inferencia sobre los efectos de ataque y defensa de los clasificados es más precisa cuando todos los partidos provienen del mismo ``universo competitivo'' (mundialistas vs. mundialistas). Segundo, el modelo A producía rankings de ataque sesgados hacia equipos de CONCACAF que habían goleado a micro-selecciones en eliminatorias, problema que persiste parcialmente incluso con la covariable Elo.
+
+\subsection{Ajuste MCMC}
+
+Ambos modelos se ajustaron con 4 cadenas independientes, 2.000 iteraciones por cadena (1.000 de calentamiento), usando el muestreador HMC de Stan a través de \texttt{brms}. El diagnóstico principal es el estadístico $\hat{R}$ de Gelman-Rubin: valores cercanos a 1.0 indican convergencia de las cadenas.
+
+\begin{table}[H]
+\centering
+\caption{Diagnósticos y estimaciones de efectos fijos}
+\begin{tabular}{lcccc}
+\toprule
+\textbf{Modelo} & \textbf{$\hat{R}$ máx.} & \textbf{$\hat{\mu}$} & \textbf{$\hat{\eta}$} & \textbf{$\hat{\beta}$} \\
+\midrule
+A (todos)     & 1.0068 & 0.053 & 0.268 & 0.711 \\
+B (WC vs WC)  & 1.0039 & 0.139 & 0.163 & 0.511 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Todos los valores de $\hat{R}$ están por debajo del umbral de 1.01, indicando convergencia satisfactoria. El coeficiente Elo ($\hat{\beta}$) es positivo y bien estimado en ambos modelos: en el Modelo B, $\exp(0.511) \approx 1.67$, lo que implica que una ventaja de 400 puntos Elo se traduce en aproximadamente un 67\% más de goles esperados, manteniendo constantes los efectos aleatorios.
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Simulación de la Fase de Grupos}
+
+\subsection{Metodología}
+
+Para cada partido de los 72 de la fase de grupos (12 grupos $\times$ $\binom{4}{2} = 6$ partidos por grupo), se simulan 100.000 escenarios del marcador final mediante muestreo del posterior predictivo:
+
+\begin{enumerate}
+  \item Se muestrea un vector de parámetros $(\mu^{(s)}, \alpha^{(s)}, \delta^{(s)}, \eta^{(s)}, \beta^{(s)})$ de las 4.000 draws disponibles del posterior.
+  \item Se calculan las tasas:
+  \begin{align}
+    \lambda_1^{(s)} &= \exp\!\left(\mu^{(s)} + \alpha_{t_1}^{(s)} - \delta_{t_2}^{(s)} + \beta^{(s)} \cdot \texttt{elo\_diff}_{t_1,t_2}\right) \\
+    \lambda_2^{(s)} &= \exp\!\left(\mu^{(s)} + \alpha_{t_2}^{(s)} - \delta_{t_1}^{(s)} - \beta^{(s)} \cdot \texttt{elo\_diff}_{t_1,t_2}\right)
+  \end{align}
+  \item Se generan $G_1^{(s)} \sim \text{Poisson}(\lambda_1^{(s)})$ y $G_2^{(s)} \sim \text{Poisson}(\lambda_2^{(s)})$.
+\end{enumerate}
+
+Los partidos de la fase de grupos del Mundial se juegan en sede neutral, por lo que $\mathbb{1}[\text{local}] = 0$ en todas las simulaciones. Dado que el número de simulaciones (100.000) es mayor que las draws disponibles (4.000), el muestreo se realiza con reemplazo. Para reducir el costo computacional de los cálculos posteriores manteniendo la variabilidad, se aplica \textit{thinning}: se conserva 1 de cada 10 escenarios, resultando en 10.000 escenarios efectivos para los standings.
+
+\subsection{Clasificación de la fase de grupos}
+
+Para cada uno de los 10.000 escenarios, se calculan los standings de cada grupo ordenando por puntos, diferencia de goles y goles a favor. Los 12 primeros y 12 segundos clasifican directamente. Para la asignación de los 8 mejores terceros, en cada escenario los 12 equipos en tercera posición se ordenan por el mismo criterio (puntos, diferencia de goles, goles a favor) y los 8 mejores pasan.
+
+Las probabilidades de clasificación se obtienen como frecuencias relativas sobre los 10.000 escenarios.
+
+\subsection{Resultados de la fase de grupos}
+
+La Tabla \ref{tab:grupos} presenta las 15 selecciones con mayor probabilidad de clasificación.
+
+\begin{table}[H]
+\centering
+\caption{Top 15 por probabilidad de clasificación a eliminatorias}
+\label{tab:grupos}
+\begin{tabular}{clccccc}
+\toprule
+\textbf{Grupo} & \textbf{Equipo} & \textbf{P(clasifica)} & \textbf{P(1°)} & \textbf{P(2°)} & \textbf{Pts. mediana} \\
+\midrule
+H & Spain       & 0.97 & 0.72 & 0.19 & 7 \\
+J & Argentina   & 0.93 & 0.62 & 0.23 & 6 \\
+I & France      & 0.91 & 0.53 & 0.26 & 6 \\
+B & Switzerland & 0.91 & 0.44 & 0.34 & 6 \\
+L & England     & 0.90 & 0.48 & 0.30 & 6 \\
+E & Germany     & 0.88 & 0.40 & 0.34 & 6 \\
+C & Brazil      & 0.87 & 0.46 & 0.27 & 6 \\
+K & Portugal    & 0.87 & 0.41 & 0.31 & 6 \\
+K & Colombia    & 0.86 & 0.42 & 0.32 & 6 \\
+F & Netherlands & 0.85 & 0.41 & 0.31 & 6 \\
+E & Ecuador     & 0.85 & 0.40 & 0.30 & 5 \\
+B & Canada      & 0.85 & 0.39 & 0.32 & 6 \\
+A & Mexico      & 0.84 & 0.42 & 0.29 & 5 \\
+H & Uruguay     & 0.84 & 0.19 & 0.50 & 5 \\
+G & Belgium     & 0.84 & 0.43 & 0.27 & 6 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Simulación de Eliminatorias}
+
+\subsection{Estructura del bracket}
+
+El Mundial 2026 introduce por primera vez una \textit{Ronda de 32}, reduciendo de 32 a 16 equipos antes de los octavos de final tradicionales. La estructura completa de rondas es:
+
+\begin{center}
+Ronda de 32 (32→16) $\to$ Ronda de 16 (16→8) $\to$ Cuartos (8→4) $\to$ Semis (4→2) $\to$ Final
+\end{center}
+
+Los cruces de la Ronda de 32 (partidos M73--M88) siguen el reglamento oficial publicado por FIFA \citep{FIFA2026}. Una característica notable es que cuatro partidos enfrentan subcampeones entre sí (2A--2B, 2E--2I, 2K--2L, 2D--2G), mientras que ocho ganadores de grupo juegan contra los mejores terceros clasificados.
+
+\subsection{Asignación de terceros al bracket}
+
+La colocación de los 8 mejores terceros en los 8 slots disponibles del bracket sigue las restricciones del reglamento FIFA: cada slot solo acepta terceros provenientes de ciertos grupos, para evitar que un equipo enfrente a una selección de su mismo grupo en la Ronda de 32. Dado que el conjunto de posibles combinaciones tiene $\binom{12}{8} = 495$ casos previstos en el Anexo C del reglamento, se implementó un algoritmo de \textit{backtracking} que encuentra en tiempo constante una asignación válida para cada escenario simulado.
+
+\subsection{Simulación de partidos eliminatorios}
+
+Cada partido eliminatorio se simula de manera equivalente a los de fase de grupos. En caso de empate al final del tiempo reglamentario, se simula un lanzamiento de penaltis como un evento Bernoulli con probabilidad 0.5 para cada equipo. Esta aproximación es una simplificación reconocida: no hay suficientes datos históricos de penaltis por selección para estimar parámetros confiables a nivel de equipo en el marco del modelo actual.
+
+\subsection{Decisión de diseño: draw independiente por simulación}
+
+Para el bracket eliminatorio, cada uno de los 10.000 escenarios utiliza un draw del posterior muestreado de forma independiente (no el mismo draw utilizado en la fase de grupos para ese escenario). Esto introduce cierta inconsistencia en los parámetros de equipo entre fases, pero es aceptable dado que las fases son modeladas como procesos separados. La alternativa sería guardar el índice de draw de fase de grupos para cada escenario y reutilizarlo, lo que se deja como trabajo futuro.
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Resultados y Discusión}
+
+\subsection{Interpretación del coeficiente Elo}
+
+El coeficiente $\hat{\beta} = 0.511$ en el Modelo B tiene una interpretación directa: una ventaja de 400 puntos Elo (e.g., Brasil $\approx 2100$ vs. una selección de $\approx 1700$) se asocia con $\exp(0.511) \approx 1.67$ veces más goles esperados, manteniendo constantes los efectos aleatorios de ataque y defensa. Esto es estadísticamente consistente con la evidencia empírica en fútbol internacional.
+
+Los efectos aleatorios de ataque y defensa en el Modelo B son notablemente pequeños (fuerza neta máxima $\approx 0.04$ en escala logarítmica), lo que indica que el Elo explica la mayor parte de las diferencias sistemáticas entre equipos. Los efectos aleatorios capturan únicamente desviaciones idiosincrásicas que el Elo no predice.
+
+\subsection{Impacto de la covariable Elo}
+
+La introducción del Elo corrigió el sesgo principal identificado en las versiones sin esta covariable: selecciones de CONCACAF como Haití y Curazao, que en el modelo sin Elo aparecían entre los primeros 5 de sus grupos por sus altas tasas de gol en eliminatorias, ahora muestran probabilidades acordes a su nivel real. El modelo ahora distingue entre ``Panamá marcó 5 goles porque enfrentó a selecciones muy débiles (alto elo\_diff)'' y ``Panamá marcó 5 goles porque su ataque es excepcionalmente bueno (alto $\alpha$)''.
+
+\subsection{Limitaciones}
+
+\begin{itemize}
+  \item \textbf{Penaltis}: Los lanzamientos de penaltis se modelan como equiprobables (50--50). Un modelo más refinado estimaría la capacidad de penaltis por equipo usando datos históricos específicos.
+  \item \textbf{Lesiones y convocatorias}: El modelo no incorpora información sobre el estado actual del plantel. Una selección que llega al Mundial con bajas importantes en posiciones clave tendrá los mismos parámetros que si llegara completa.
+  \item \textbf{Tiempo extra}: Los partidos eliminatorios empatados no simulan los 30 minutos de tiempo extra antes de los penaltis; se va directamente a la simulación Bernoulli 50--50.
+  \item \textbf{Consistencia entre fases}: Los draws del posterior se remuestrean de forma independiente entre la fase de grupos y las eliminatorias, introduciendo una inconsistencia menor en la representación de los parámetros de equipo a lo largo del torneo.
+  \item \textbf{Varianza Poisson}: Los modelos de Poisson asumen que la varianza es igual a la media. El fútbol real muestra sobredispersión (más partidos de alta y baja puntuación de lo que predice Poisson). Un modelo binomial negativo capturaría mejor las colas de la distribución de goles.
+\end{itemize}
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Conclusiones}
+
+Se desarrolló un pipeline estadístico reproducible para predecir los resultados del Mundial FIFA 2026, partiendo de la minería de datos en ESPN y un repositorio de historial internacional, hasta la simulación completa de las cinco rondas eliminatorias.
+
+Las contribuciones metodológicas principales son: (1) la incorporación de ratings Elo calculados sobre el historial completo como covariable fija del modelo, que resuelve el sesgo de sobreestimación de equipos con muchas goleadas ante rivales débiles; (2) el uso de inferencia bayesiana completa via MCMC, que propaga la incertidumbre paramétrica a través de todas las simulaciones; (3) la implementación del bracket oficial FIFA 2026 con su estructura de Ronda de 32, incluyendo un algoritmo de backtracking para la asignación correcta de terceros clasificados.
+
+Los resultados sitúan a España, Argentina y Francia como los tres equipos con mayor probabilidad de clasificar en primer lugar de su grupo (72\%, 62\% y 53\% respectivamente), con Portugal, Colombia y España como los candidatos más fuertes al título según las simulaciones de eliminatorias.
+
+% ─────────────────────────────────────────────────────────────────────────────
+\bibliographystyle{plainnat}
+\begin{thebibliography}{99}
+
+\bibitem[Burkner(2017)]{Burkner2017}
+Bürkner, P.-C. (2017).
+\newblock brms: An R Package for Bayesian Multilevel Models Using Stan.
+\newblock \textit{Journal of Statistical Software}, 80(1), 1--28.
+
+\bibitem[Dixon \& Coles(1997)]{Dixon1997}
+Dixon, M. J., \& Coles, S. G. (1997).
+\newblock Modelling Association Football Scores and Inefficiencies in the Football Betting Market.
+\newblock \textit{Journal of the Royal Statistical Society: Series C (Applied Statistics)}, 46(2), 265--280.
+
+\bibitem[FIFA(2026)]{FIFA2026}
+FIFA (2026).
+\newblock \textit{FIFA World Cup 2026 Tournament Regulations}.
+\newblock Zurich: Fédération Internationale de Football Association.
+\newblock Disponible en: \url{https://www.fifa.com}
+
+\bibitem[Hvattum \& Arntzen(2010)]{Hvattum2010}
+Hvattum, L. M., \& Arntzen, H. (2010).
+\newblock Using ELO Ratings for Match Result Prediction in Association Football.
+\newblock \textit{International Journal of Forecasting}, 26(3), 460--470.
+
+\bibitem[martj42(2024)]{martj42}
+martj42 (2024).
+\newblock \textit{International Football Results from 1872 to 2024}.
+\newblock GitHub repository: \url{https://github.com/martj42/international_results}
+
+\end{thebibliography}
+
+\end{document}
