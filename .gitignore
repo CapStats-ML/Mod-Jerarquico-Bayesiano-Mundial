@@ -1,0 +1,24 @@
+# R
+.Rhistory
+.RData
+.Rproj.user/
+*.Rproj
+renv/library/
+renv/.cache/
+
+# Datos crudos y grandes (no versionar binarios pesados)
+data/raw/
+data/external/
+
+# Outputs generados (se pueden reproducir)
+output/posteriors/*.rds
+output/figures/*.png
+output/figures/*.pdf
+
+# Variables de entorno
+.env
+.Renviron
+
+# Sistema operativo
+.DS_Store
+Thumbs.db
