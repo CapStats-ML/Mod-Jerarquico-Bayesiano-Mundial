@@ -266,6 +266,7 @@ for (i in seq_len(nrow(prob_table))) {
 
 top16 <- prob_table |> slice_head(n = 16)
 
+dir.create("output/figures", showWarnings = FALSE, recursive = TRUE)
 pdf("output/figures/knockout_champion_probs.pdf", width = 11, height = 6)
 par(mar = c(7, 4, 3, 1))
 bp <- barplot(
@@ -455,3 +456,15 @@ final_res <- sim_match_ko(sf_win[1], sf_win[2])
 print_round(list(final_res), "FINAL")
 
 cat(sprintf("\n  *** Campeón del escenario más probable: %s ***\n\n", final_res$winner))
+
+# Partido por el 3er lugar (perdedores de semifinales)
+sf_loser1 <- if (sf_res[[1]]$winner == sf_res[[1]]$t1) sf_res[[1]]$t2 else sf_res[[1]]$t1
+sf_loser2 <- if (sf_res[[2]]$winner == sf_res[[2]]$t1) sf_res[[2]]$t2 else sf_res[[2]]$t1
+third_res  <- sim_match_ko(sf_loser1, sf_loser2)
+cat(sprintf("\n  3er lugar: %s vs %s  →  %s\n", sf_loser1, sf_loser2, third_res$winner))
+
+# Guardar bracket para 07_bracket_viz.R
+saveRDS(list(r32 = r32_res, r16 = r16_res, qf = qf_res, sf = sf_res,
+             final = final_res, third = third_res),
+        "output/tables/bracket_ml.rds")
+message("✓ output/tables/bracket_ml.rds")
