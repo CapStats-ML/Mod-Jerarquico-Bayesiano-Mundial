@@ -56,6 +56,8 @@ log(λ_i) = μ + α[equipo_i] − δ[rival_i] + η · es_local + β · elo_diff_
 - Inferencia via `brms` + Stan (HMC-NUTS)
 - Dos modelos: **A** (todos los equipos históricos) y **B** (solo WC vs WC)
 
+![DAG del modelo](output/figures/dag_modelo.png)
+
 ---
 
 ## Pipeline
