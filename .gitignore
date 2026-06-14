@@ -1,23 +1,16 @@
-# R
+# Modelos ajustados (archivos grandes de Stan/brms)
+output/posteriors/
+
+# Output generado de gran tamaño
+output/tables/standings_long.csv
+
+# Banderas descargadas (se regeneran automáticamente)
+output/flags/
+
+# Archivos de R
 .Rhistory
 .RData
 .Rproj.user/
-*.Rproj
-renv/library/
-renv/.cache/
-
-# Datos crudos y grandes (no versionar binarios pesados)
-data/raw/
-data/external/
-
-# Outputs generados (se pueden reproducir)
-output/posteriors/*.rds
-output/figures/*.png
-output/figures/*.pdf
-
-# Variables de entorno
-.env
-.Renviron
 
 # Sistema operativo
 .DS_Store
