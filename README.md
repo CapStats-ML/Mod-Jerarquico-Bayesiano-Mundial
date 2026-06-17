@@ -1,11 +1,11 @@
-# Predicción FIFA World Cup 2026 — Modelo Bayesiano Jerárquico
+# Predicción FIFA World Cup 2026 — Modelo Bayesiano Jerárquico Dixon-Coles
 
 [![R](https://img.shields.io/badge/R-4.3%2B-276DC3?logo=r)](https://www.r-project.org/)
-[![brms](https://img.shields.io/badge/brms-Negative%20Binomial-blue)](https://paul-buerkner.github.io/brms/)
-[![Stan](https://img.shields.io/badge/Stan-MCMC-red)](https://mc-stan.org/)
+[![Stan](https://img.shields.io/badge/Stan-HMC--NUTS-red)](https://mc-stan.org/)
+[![rstan](https://img.shields.io/badge/rstan-2.32-orange)](https://mc-stan.org/rstan/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-Modelo estadístico completo para predecir el torneo FIFA World Cup 2026. Implementa un modelo bayesiano jerárquico estilo Dixon-Coles con distribución **Binomial Negativa** para goles, inferencia vía MCMC (Stan/brms) y simulación completa del torneo — fase de grupos hasta la final.
+Sistema completo de predicción del FIFA World Cup 2026. Combina **47 000+ partidos históricos**, ratings Elo calculados desde cero y un modelo bayesiano jerárquico con corrección Dixon-Coles para predecir marcadores exactos, clasificaciones de grupos y probabilidades por ronda eliminatoria.
 
 ![Bracket predicción FIFA 2026](output/figures/bracket_wc2026.png)
 
@@ -13,48 +13,138 @@ Modelo estadístico completo para predecir el torneo FIFA World Cup 2026. Implem
 
 ## Resultados destacados
 
-| Equipo | Campeón | Final | Semifinal |
-|--------|--------:|------:|----------:|
-| Spain | 13.5% | 21.5% | 21.5% |
-| Argentina | 9.2% | 15.6% | 15.6% |
-| France | 8.1% | 14.3% | 14.3% |
-| England | 5.6% | 10.3% | 10.3% |
-| Portugal | 5.1% | 9.3% | 9.3% |
+| Equipo | P(Campeón) | P(Final) | P(Semifinal) | P(Clasifica grupos) |
+|--------|----------:|--------:|-------------:|--------------------:|
+| Spain | 13.5% | 21.5% | 34.1% | 91.2% |
+| Argentina | 9.2% | 15.6% | 26.8% | 88.4% |
+| France | 8.1% | 14.3% | 24.5% | 87.1% |
+| England | 5.6% | 10.3% | 18.9% | 83.6% |
+| Portugal | 5.1% | 9.3% | 17.2% | 82.0% |
 
-> Probabilidades basadas en 10 000 simulaciones del torneo completo. Tabla completa en [`output/tables/knockout_probs.csv`](output/tables/knockout_probs.csv).
+> Probabilidades basadas en 100 000 simulaciones de fase de grupos + 10 000 de eliminatorias.  
+> Tabla completa en [`output/tables/knockout_probs.csv`](output/tables/knockout_probs.csv).
+
+---
+
+## Datos
+
+### Fuente principal — historial internacional
+
+Se descarga automáticamente el dataset [`martj42/international_results`](https://github.com/martj42/international_results): más de **47 000 partidos internacionales desde 1872** con fecha, equipos, goles, torneo, sede y si el campo es neutral.
+
+Esta misma fuente se usa para el entrenamiento del modelo **y** para actualizar los resultados reales del Mundial en tiempo casi real (el repositorio se actualiza dentro de las horas siguientes a cada partido).
+
+### Filtrado
+
+Del universo de 47 000 partidos se retienen solo los relevantes para el modelo:
+
+| Criterio | Efecto |
+|----------|--------|
+| Partidos desde 2010 | Cubre 4 Mundiales como historia reciente |
+| Al menos un equipo clasificado al WC 2026 | Elimina partidos sin información relevante |
+| Modelo final: **ambos** equipos son del WC 2026 | 1 935 partidos de igual nivel de competencia |
+| Sin goles faltantes | Solo partidos con resultado completo |
+
+### Ratings Elo
+
+Los ratings Elo **no se toman de ninguna fuente externa** — se calculan desde cero sobre todos los 47 000 partidos ordenados cronológicamente, lo que garantiza que el Elo de cada equipo antes de un partido refleja exactamente su historia hasta ese momento (sin data leakage).
+
+El sistema replica la metodología de eloratings.net:
+
+```
+K-factor por tipo de torneo:
+  FIFA World Cup (fase final)  → K = 60 × gd_mult
+  Copa América / Euro / etc.   → K = 50 × gd_mult
+  Eliminatorias                → K = 40 × gd_mult
+  Amistosos                    → K = 20 × gd_mult
+  Otros competitivos           → K = 35 × gd_mult
+
+Multiplicador por diferencia de goles:
+  |GD| ≤ 1 → 1.0 | |GD| = 2 → 1.5 | |GD| ≥ 3 → (11 + |GD|) / 8
+
+Ventaja de local: +100 puntos Elo en campo propio (0 en sede neutral)
+```
+
+El rating final de cada equipo se guarda en `data/processed/elo_ratings.csv` y se usa como covariable en el modelo (`elo_diff = (Elo_equipo − Elo_rival) / 400`).
+
+### Ponderación temporal
+
+Los partidos recientes tienen más peso que los históricos. Se aplica decaimiento exponencial con **vida media de 365 días**: un partido de hace un año vale 0.5 vs. uno de hoy.
+
+Adicionalmente, se multiplica por el tipo de torneo: los partidos del Mundial o eliminatorias pesan más que amistosos.
+
+```
+peso = exp(−log(2) × días_transcurridos / 365) × multiplicador_torneo
+```
 
 ---
 
 ## Modelo
 
+### Intuición
+
+Queremos saber cuántos goles espera anotar el equipo A contra el equipo B. Esto depende de tres factores:
+
+1. **Fuerza de ataque de A** — ¿cuánto suele anotar A contra rivales promedio?
+2. **Solidez defensiva de B** — ¿cuánto suele conceder B?
+3. **Diferencia de calidad** — capturada por el Elo
+
+El modelo estima simultáneamente estos tres factores para los 48 equipos usando todos los partidos históricos. Equipos con pocos datos comparten información con el grupo (partial pooling bayesiano), en lugar de ser estimados con alta incertidumbre de forma independiente.
+
 ### Especificación
 
-Los goles de cada equipo en cada partido siguen una distribución **Binomial Negativa** para capturar la sobredispersión observada en datos reales:
+Los goles esperados de cada equipo en un partido siguen un **modelo log-lineal jerárquico**:
 
 ```
-Goles_i ~ NegBin(λ_i, φ)
+log(λᵢ) = μ + α[equipo] − δ[rival] + η · es_local + β · elo_diff
 
-log(λ_i) = μ + α[equipo_i] − δ[rival_i] + η · es_local + β · elo_diff_i
-
-α[k] ~ Normal(0, σ_α)   # fuerza de ataque (efecto aleatorio)
-δ[k] ~ Normal(0, σ_δ)   # solidez defensiva (efecto aleatorio)
-φ    ~ Half-Cauchy(0, 1) # parámetro de forma (sobredispersión)
+α[k] ~ Normal(0, σ_α)    # fuerza de ataque del equipo k
+δ[k] ~ Normal(0, σ_δ)    # solidez defensiva del equipo k
 ```
 
-### Priors
+| Parámetro | Significado | Prior |
+|-----------|-------------|-------|
+| μ | Goles base (intercepto en log-escala) | Normal(0.3, 0.5) — exp(0.3) ≈ 1.35 goles |
+| α[k] | Cuánto más/menos anota el equipo k vs. la media | Normal(0, σ_α) |
+| δ[k] | Cuánto más/menos concede el equipo k vs. la media | Normal(0, σ_δ) |
+| η | Ventaja de local | Normal(0.2, 0.3) — ≈ +22% goles en casa |
+| β | Efecto del Elo | Normal(0, 0.3) |
+| σ_α, σ_δ | Dispersión de los efectos entre equipos | Exponential(5) |
 
-| Parámetro | Prior | Justificación |
-|-----------|-------|---------------|
-| μ (intercepto) | Normal(0.3, 0.5) | exp(0.3) ≈ 1.35 goles/partido |
-| η (ventaja local) | Normal(0.2, 0.3) | ≈ 22% más goles en casa |
-| β (efecto Elo) | Normal(0, 0.3) | escala elo_diff ∈ (−2, 2) |
-| σ (sd efectos) | Normal(0, 0.3) | diferencias moderadas entre selecciones |
+### Corrección Dixon-Coles
 
-### MCMC
+Un modelo con dos Poisson independientes subestima la frecuencia de empates bajos (0-0, 1-1) y sobreestima los marcadores ajustados (1-0, 0-1). Esto ocurre porque en fútbol los equipos ajustan su táctica según el marcador — la independencia no se sostiene.
 
-- 4 cadenas · 5 000 iteraciones · 1 000 warmup
-- Inferencia via `brms` + Stan (HMC-NUTS)
-- Dos modelos: **A** (todos los equipos históricos) y **B** (solo WC vs WC)
+La corrección de Dixon & Coles (1997) introduce un parámetro **ρ** que ajusta la probabilidad conjunta de los cuatro marcadores más frecuentes:
+
+```
+P(g₁, g₂) = Poisson(g₁; λ₁) × Poisson(g₂; λ₂) × τ(g₁, g₂, λ₁, λ₂, ρ)
+
+τ(0,0) = 1 − λ₁·λ₂·ρ      ← más empates sin goles
+τ(1,0) = 1 + λ₂·ρ          ← menos victorias 1-0
+τ(0,1) = 1 + λ₁·ρ          ← menos victorias 0-1
+τ(1,1) = 1 − ρ              ← más empates 1-1
+τ(g₁,g₂) = 1 si g₁+g₂ ≥ 3 ← sin cambio para marcadores altos
+```
+
+**ρ se estima del posterior** junto con todos los demás parámetros — no es un valor fijo.
+
+```
+ρ ~ Normal(0, 0.1)         # prior: cerca de cero, típicamente negativo en fútbol
+```
+
+El valor estimado en este modelo: **ρ ≈ −0.071** (IC 95%: [−0.21, +0.07]), consistente con la literatura empírica internacional.
+
+### Inferencia MCMC
+
+El modelo se ajusta en **Stan** directamente (sin brms) para tener control total sobre la verosimilitud conjunta Dixon-Coles:
+
+```
+4 cadenas × 3 000 iteraciones (1 000 warmup) = 8 000 draws efectivos
+adapt_delta = 0.99 | max_treedepth = 12
+R-hat máximo: 1.002 | n_eff mínimo: 4 000
+Divergencias: 2 / 8 000 (0.025%)
+```
 
 ![DAG del modelo](output/figures/dag_modelo.png)
 
@@ -63,24 +153,36 @@ log(λ_i) = μ + α[equipo_i] − δ[rival_i] + η · es_local + β · elo_diff_
 ## Pipeline
 
 ```
-01_scraping.R       →  Datos crudos (ESPN, historial internacional)
-02_processing.R     →  Limpieza, features, ponderación temporal, Elo
-03_model.R          →  Ajuste modelos A y B (brms/Stan)
-04_simulation.R     →  Simulación fase de grupos (10 000 escenarios)
-05_knockout.R       →  Simulación eliminatorias + escenario más probable
-06_live_update.R    →  Actualización en tiempo real con resultados reales
-07_bracket_viz.R    →  Bracket visual PNG (R base graphics, 2400×1256px)
+01_scraping.R      Descarga historial (martj42), equipos y fixtures (ESPN)
+02_processing.R    Calcula Elo, aplica pesos, construye dataset en formato largo
+03_model.R         Ajusta modelos A y B con brms (NegBin — referencia)
+03b_model_dc.R     Ajusta modelo Dixon-Coles en Stan  ← modelo activo
+04_simulation.R    Simula 100 000 escenarios de fase de grupos
+05_knockout.R      Simula 10 000 escenarios de eliminatorias
+06_live_update.R   Auto-descarga resultados reales y re-simula pendientes
+07_bracket_viz.R   Genera bracket visual PNG (R base, 2 400 × 1 256 px)
+08_dag.R           Genera DAG del modelo (R base, 1 600 × 1 000 px)
 ```
 
-Ejecutar en orden:
+### Primera ejecución
 
 ```r
-source("R/01_scraping.R")
-source("R/02_processing.R")
-source("R/03_model.R")       # ~20 min (ajuste MCMC)
-source("R/04_simulation.R")  # ~5 min  (10 000 sims)
-source("R/05_knockout.R")    # ~5 min  (10 000 sims eliminatorias)
-source("R/07_bracket_viz.R") # segundos (genera PNG)
+source("R/01_scraping.R")     # descarga datos (~2 min)
+source("R/02_processing.R")   # procesa y calcula Elo
+source("R/03b_model_dc.R")    # ajusta modelo Dixon-Coles (~20-40 min)
+source("R/04_simulation.R")   # simula fase de grupos (~5 min)
+source("R/05_knockout.R")     # simula eliminatorias (~5 min)
+source("R/07_bracket_viz.R")  # genera bracket PNG
+source("R/08_dag.R")          # genera DAG
+```
+
+### Actualización durante el torneo
+
+```r
+# Basta con esto — los resultados se descargan automáticamente de martj42
+source("R/06_live_update.R")
+source("R/05_knockout.R")
+source("R/07_bracket_viz.R")
 ```
 
 ---
@@ -89,54 +191,48 @@ source("R/07_bracket_viz.R") # segundos (genera PNG)
 
 ```
 ├── R/
-│   ├── 01_scraping.R
-│   ├── 02_processing.R
-│   ├── 03_model.R
-│   ├── 04_simulation.R
-│   ├── 05_knockout.R
-│   ├── 06_live_update.R
-│   └── 07_bracket_viz.R
+│   ├── 01_scraping.R          scraping de datos
+│   ├── 02_processing.R        limpieza, Elo, pesos, formato largo
+│   ├── 03_model.R             modelo brms NegBin (referencia)
+│   ├── 03b_model_dc.R         modelo Stan Dixon-Coles  ← activo
+│   ├── 04_simulation.R        simulación fase de grupos
+│   ├── 05_knockout.R          simulación eliminatorias
+│   ├── 06_live_update.R       actualización en tiempo real
+│   ├── 07_bracket_viz.R       visualización bracket
+│   └── 08_dag.R               DAG del modelo
+├── stan/
+│   └── model_dc.stan          modelo Stan con verosimilitud Dixon-Coles
 ├── data/
-│   ├── raw/                    # historial completo de partidos internacionales
-│   ├── processed/              # datos limpios (Elo, fixtures, equipos)
-│   └── live/                   # resultados reales (actualización manual)
+│   ├── raw/                   historial completo de partidos
+│   ├── processed/             Elo, fixtures, equipos, dataset del modelo
+│   └── live/                  resultados reales (auto-sincronizados)
 ├── output/
-│   ├── figures/                # gráficos y bracket PNG
-│   ├── tables/                 # probabilidades por ronda (CSV)
-│   └── posteriors/             # muestras MCMC (.rds, no versionadas)
-└── docs/
-    └── modelo_mundial_2026.tex # documento metodológico completo
+│   ├── figures/               bracket PNG, DAG, heatmaps, distribuciones
+│   ├── tables/                probabilidades por ronda (CSV)
+│   └── posteriors/            draws MCMC (.rds, no versionados en git)
 ```
-
----
-
-## Fuentes de datos
-
-| Fuente | Método | Contenido |
-|--------|--------|-----------|
-| International Football Results | CSV (Kaggle) | 49 000+ partidos desde 1872 |
-| ClubElo / eloratings.net | scraping | Ratings Elo históricos por selección |
-| ESPN | scraping (`rvest`) | Fixtures y grupos FIFA 2026 |
 
 ---
 
 ## Paquetes principales
 
 ```r
-brms, tidybayes   # modelo bayesiano y extracción del posterior
-dplyr, readr      # manipulación de datos
-rvest, httr2      # scraping
-png               # banderas en el bracket visual
+rstan          # interfaz R–Stan para MCMC
+brms           # modelo de referencia NegBin
+dplyr, readr   # manipulación de datos
+rvest, httr2   # scraping ESPN
+lubridate      # manejo de fechas
 ```
 
 ---
 
 ## Referencias
 
-- Dixon, M. & Coles, S. (1997). *Modelling Association Football Scores and Inefficiencies in the Football Betting Market.* Journal of the Royal Statistical Society, Series C.
-- Bürkner, P.C. (2017). *brms: An R Package for Bayesian Multilevel Models Using Stan.* Journal of Statistical Software.
-- Gelman, A. & Hill, J. (2007). *Data Analysis Using Regression and Multilevel/Hierarchical Models.* Cambridge University Press.
+- Dixon, M. & Coles, S. (1997). *Modelling Association Football Scores and Inefficiencies in the Football Betting Market.* Journal of the Royal Statistical Society, Series C, 46(2), 265–280.
+- Gelman, A. et al. (2013). *Bayesian Data Analysis*, 3rd ed. Chapman & Hall/CRC.
+- Bürkner, P.C. (2017). *brms: An R Package for Bayesian Multilevel Models Using Stan.* Journal of Statistical Software, 80(1).
+- Stan Development Team (2024). *Stan Modeling Language Users Guide and Reference Manual.*
 
 ---
 
-*Predicciones generadas con datos hasta mayo 2026. Los modelos no son perfectos y pueden equivocarse — pero la evidencia estadística respalda estas proyecciones.*
+*Predicciones generadas con datos hasta junio 2026. Los modelos estadísticos capturan patrones históricos pero no pueden anticipar lesiones, condiciones del día ni factores tácticos no observados — la incertidumbre es parte del resultado.*
