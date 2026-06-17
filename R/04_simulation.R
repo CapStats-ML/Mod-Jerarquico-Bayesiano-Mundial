@@ -6,11 +6,24 @@ library(purrr)
 library(stringr)
 
 # ── 1. Cargar modelo y mapa de nombres ────────────────────────────────────────
+# Si existe draws_DC_wc_vs_wc.rds (modelo Dixon-Coles) se usa automáticamente.
+# Si no, cae al Modelo B (NegBinomial brms). El flag use_dc controla la
+# corrección Dixon-Coles en la simulación.
 
-fit_A       <- readRDS("output/posteriors/fit_A_todos.rds")
-fit_B       <- readRDS("output/posteriors/fit_B_wc_vs_wc.rds")
 teams_map   <- read_csv("data/processed/teams_name_map.csv",  show_col_types = FALSE)
 elo_ratings <- read_csv("data/processed/elo_ratings.csv",     show_col_types = FALSE)
+
+dc_path <- "output/posteriors/draws_DC_wc_vs_wc.rds"
+use_dc  <- file.exists(dc_path)
+
+if (use_dc) {
+  message("Modelo: Dixon-Coles (Poisson jerárquico con corrección ρ)")
+  draws_df <- readRDS(dc_path)
+} else {
+  message("Modelo: NegBinomial brms (Modelo B — ejecuta 03b_model_dc.R para activar DC)")
+  fit_B    <- readRDS("output/posteriors/fit_B_wc_vs_wc.rds")
+  draws_df <- as_draws_df(fit_B)
+}
 
 # Lista nombrada: team → elo (lookup con [[]] que devuelve NULL si falta la clave)
 elo_lookup  <- as.list(setNames(elo_ratings$elo, elo_ratings$team))
@@ -96,8 +109,8 @@ if (!file.exists(live_path)) {
 
 # ── 4. Extraer draws del posterior ────────────────────────────────────────────
 
-message("Extrayendo draws del posterior (Modelo B: WC vs WC)...")
-draws_df <- as_draws_df(fit_B)
+message(sprintf("Extrayendo draws del posterior (%s)...",
+                if (use_dc) "Dixon-Coles DC" else "Modelo B NegBin"))
 
 wc_teams <- teams_map$history_name
 
@@ -117,7 +130,8 @@ extract_re <- function(draws, prefix) {
 ataque     <- extract_re(draws_df, "r_equipo")
 defensa    <- extract_re(draws_df, "r_rival")
 intercepto <- draws_df$b_Intercept
-b_elo      <- draws_df$b_elo_diff   # coeficiente posterior de elo_diff
+b_elo      <- draws_df$b_elo_diff
+rho_s      <- if (use_dc && "rho" %in% names(draws_df)) as.numeric(draws_df$rho) else NULL
 
 n_draws <- length(intercepto)
 message(sprintf("Draws disponibles: %d", n_draws))
@@ -158,12 +172,14 @@ simulate_group_stage <- function(fixtures, n_sim = 1000, seed = 2026) {
   idx <- sample(seq_len(n_draws), n_sim, replace = n_sim > n_draws)
 
   int_s   <- intercepto[idx]
-  b_elo_s <- b_elo[idx]        # vector de n_sim draws del coef. elo_diff
+  b_elo_s <- b_elo[idx]
   atk     <- as.data.frame(ataque[idx, , drop = FALSE])
   def     <- as.data.frame(defensa[idx, , drop = FALSE])
+  rho_sim <- if (!is.null(rho_s)) rho_s[idx] else NULL
 
-  message(sprintf("\nSimulando %d escenarios para %d partidos...\n",
-                  n_sim, nrow(fixtures)))
+  message(sprintf("\nSimulando %d escenarios para %d partidos%s...\n",
+                  n_sim, nrow(fixtures),
+                  if (!is.null(rho_sim)) "  [Dixon-Coles activo]" else ""))
   pb <- txtProgressBar(min = 0, max = nrow(fixtures), style = 3, width = 50)
 
   match_results <- vector("list", nrow(fixtures))
@@ -172,19 +188,32 @@ simulate_group_stage <- function(fixtures, n_sim = 1000, seed = 2026) {
     t1 <- fixtures$equipo1[i]
     t2 <- fixtures$equipo2[i]
 
-    # elo_diff = (elo_equipo - elo_rival) / 400 (mismo escalado que en entrenamiento)
-    # Fallback a 1500 si el equipo no está en el lookup (no debería ocurrir)
     elo1 <- if (!is.null(elo_lookup[[t1]])) elo_lookup[[t1]] else 1500
     elo2 <- if (!is.null(elo_lookup[[t2]])) elo_lookup[[t2]] else 1500
     elo_diff_t1 <- (elo1 - elo2) / 400
-    elo_diff_t2 <- -elo_diff_t1   # perspectiva del equipo 2
 
-    # Los partidos del Mundial son en sede neutral → no se suma ventaja de local
-    lambda1 <- exp(int_s + get_re(atk, t1, n_sim) - get_re(def, t2, n_sim) + b_elo_s * elo_diff_t1)
-    lambda2 <- exp(int_s + get_re(atk, t2, n_sim) - get_re(def, t1, n_sim) + b_elo_s * elo_diff_t2)
+    lambda1 <- exp(int_s + get_re(atk, t1, n_sim) - get_re(def, t2, n_sim) + b_elo_s *  elo_diff_t1)
+    lambda2 <- exp(int_s + get_re(atk, t2, n_sim) - get_re(def, t1, n_sim) + b_elo_s * -elo_diff_t1)
 
     g1 <- rpois(n_sim, lambda1)
     g2 <- rpois(n_sim, lambda2)
+
+    # Corrección Dixon-Coles: remuestrea (g1, g2) con pesos τ
+    # τ ≠ 1 solo para los 4 marcadores de baja puntuación; ajusta la correlación
+    # entre goles sin cambiar las λ individuales.
+    if (!is.null(rho_sim)) {
+      tau        <- rep(1.0, n_sim)
+      m00 <- g1 == 0L & g2 == 0L
+      m10 <- g1 == 1L & g2 == 0L
+      m01 <- g1 == 0L & g2 == 1L
+      m11 <- g1 == 1L & g2 == 1L
+      if (any(m00)) tau[m00] <- pmax(1 - lambda1[m00] * lambda2[m00] * rho_sim[m00], 1e-10)
+      if (any(m10)) tau[m10] <- pmax(1 + lambda2[m10] * rho_sim[m10],               1e-10)
+      if (any(m01)) tau[m01] <- pmax(1 + lambda1[m01] * rho_sim[m01],               1e-10)
+      if (any(m11)) tau[m11] <- pmax(1 - rho_sim[m11],                              1e-10)
+      dc_idx <- sample.int(n_sim, n_sim, replace = TRUE, prob = tau / sum(tau))
+      g1 <- g1[dc_idx]; g2 <- g2[dc_idx]
+    }
 
     match_results[[i]] <- tibble(
       sim_id  = seq_len(n_sim),
@@ -399,3 +428,72 @@ for (i in seq_len(nrow(match_summary))) {
 
 dev.off()
 message("✓ Guardado: output/figures/goles_por_partido.pdf  (72 partidos)")
+
+# ── 12. Mapa de calor de marcadores por partido ──────────────────────────────
+# Para cada grupo: 6 heatmaps (layout 2×3). Cada celda (i,j) muestra
+# P(equipo1 anota i goles, equipo2 anota j goles) a partir de las simulaciones.
+# Goles se capan en max_g+ para concentrar la masa en la región visible.
+
+plot_score_heatmap <- function(t1, t2, grp, sub_sims, max_g = 10) {
+  g1c <- pmin(sub_sims$g1, max_g)
+  g2c <- pmin(sub_sims$g2, max_g)
+
+  tab   <- table(factor(g1c, levels = 0:max_g),
+                 factor(g2c, levels = 0:max_g))
+  probs <- tab / sum(tab)  # matriz (max_g+1) × (max_g+1)
+
+  ax_labels <- c(as.character(0:(max_g - 1)), paste0(max_g, "+"))
+  pal        <- colorRampPalette(c("#f7fbff", "#1a6fba"))(100)
+
+  # image(): probs[i,j] se dibuja centrado en (i-1, j-1)
+  # eje x = goles equipo1, eje y = goles equipo2
+  image(0:max_g, 0:max_g, probs,
+        col  = pal,
+        zlim = c(0, max(probs)),
+        xlab = t1,
+        ylab = t2,
+        main = sprintf("Grupo %s  |  %s vs %s", grp, t1, t2),
+        axes = FALSE,
+        cex.main = 0.85)
+
+  axis(1, at = 0:max_g, labels = ax_labels, cex.axis = 0.8)
+  axis(2, at = 0:max_g, labels = ax_labels, cex.axis = 0.8, las = 2)
+
+  # Porcentaje en cada celda (solo si ≥ 1%)
+  for (i in 0:max_g) {
+    for (j in 0:max_g) {
+      pct <- round(probs[i + 1L, j + 1L] * 100)
+      if (pct >= 1L) {
+        col_txt <- if (probs[i + 1L, j + 1L] > max(probs) * 0.55) "white" else "grey20"
+        text(i, j, paste0(pct, "%"), cex = 0.72, col = col_txt, font = 2)
+      }
+    }
+  }
+
+  # Diagonal punteada = empate (g1 == g2)
+  abline(0, 1, col = "grey50", lty = 2, lwd = 0.9)
+  box()
+}
+
+pdf("output/figures/heatmap_marcadores.pdf", width = 14, height = 10)
+
+for (grp in sort(unique(match_summary$group))) {
+  df_grp <- match_summary |> filter(group == grp)
+  n_sim_grp <- sims |> filter(group == grp) |> pull(sim_id) |> n_distinct()
+
+  par(mfrow = c(2, 3), mar = c(4, 4, 3, 1), oma = c(0, 0, 2.5, 0))
+
+  for (i in seq_len(nrow(df_grp))) {
+    t1       <- df_grp$equipo1[i]
+    t2       <- df_grp$equipo2[i]
+    sub_sims <- sims |> filter(equipo1 == t1, equipo2 == t2)
+    plot_score_heatmap(t1, t2, grp, sub_sims, max_g = 10)
+  }
+
+  mtext(sprintf("Grupo %s  —  Distribución de marcadores  (n = %s simulaciones)",
+                grp, format(n_sim_grp, big.mark = ",")),
+        outer = TRUE, cex = 1.1, font = 2)
+}
+
+dev.off()
+message("✓ Guardado: output/figures/heatmap_marcadores.pdf  (12 grupos, 6 partidos c/u)")

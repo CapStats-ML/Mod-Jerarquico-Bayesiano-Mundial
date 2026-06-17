@@ -5,60 +5,60 @@ A,Mexico,South Africa,2,0
 A,South Korea,Czech Republic,2,1
 A,South Korea,South Africa,NA,NA
 A,Czech Republic,South Africa,NA,NA
-B,Canada,Bosnia and Herzegovina,2,1
+B,Canada,Bosnia and Herzegovina,1,1
 B,Canada,Qatar,NA,NA
 B,Canada,Switzerland,NA,NA
 B,Bosnia and Herzegovina,Qatar,NA,NA
 B,Bosnia and Herzegovina,Switzerland,NA,NA
-B,Qatar,Switzerland,NA,NA
-C,Brazil,Morocco,NA,NA
+B,Qatar,Switzerland,1,1
+C,Brazil,Morocco,1,1
 C,Brazil,Haiti,NA,NA
 C,Brazil,Scotland,NA,NA
 C,Morocco,Haiti,NA,NA
 C,Morocco,Scotland,NA,NA
-C,Haiti,Scotland,NA,NA
+C,Haiti,Scotland,0,1
 D,United States,Paraguay,4,1
 D,United States,Australia,NA,NA
 D,United States,Turkey,NA,NA
 D,Paraguay,Australia,NA,NA
 D,Paraguay,Turkey,NA,NA
-D,Australia,Turkey,NA,NA
-E,Germany,Curaçao,NA,NA
+D,Australia,Turkey,2,0
+E,Germany,Curaçao,7,1
 E,Germany,Ivory Coast,NA,NA
 E,Germany,Ecuador,NA,NA
 E,Curaçao,Ivory Coast,NA,NA
 E,Curaçao,Ecuador,NA,NA
-E,Ivory Coast,Ecuador,NA,NA
-F,Netherlands,Japan,NA,NA
+E,Ivory Coast,Ecuador,1,0
+F,Netherlands,Japan,2,2
 F,Netherlands,Sweden,NA,NA
 F,Netherlands,Tunisia,NA,NA
 F,Japan,Sweden,NA,NA
 F,Japan,Tunisia,NA,NA
-F,Sweden,Tunisia,NA,NA
-G,Belgium,Egypt,NA,NA
+F,Sweden,Tunisia,5,1
+G,Belgium,Egypt,2,1
 G,Belgium,Iran,NA,NA
 G,Belgium,New Zealand,NA,NA
 G,Egypt,Iran,NA,NA
 G,Egypt,New Zealand,NA,NA
-G,Iran,New Zealand,NA,NA
-H,Spain,Cape Verde,NA,NA
+G,Iran,New Zealand,2,2
+H,Spain,Cape Verde,0,0
 H,Spain,Saudi Arabia,NA,NA
 H,Spain,Uruguay,NA,NA
 H,Cape Verde,Saudi Arabia,NA,NA
 H,Cape Verde,Uruguay,NA,NA
-H,Saudi Arabia,Uruguay,NA,NA
-I,France,Senegal,NA,NA
+H,Saudi Arabia,Uruguay,1,1
+I,France,Senegal,3,1
 I,France,Iraq,NA,NA
 I,France,Norway,NA,NA
 I,Senegal,Iraq,NA,NA
 I,Senegal,Norway,NA,NA
-I,Iraq,Norway,NA,NA
-J,Argentina,Algeria,NA,NA
+I,Iraq,Norway,1,4
+J,Argentina,Algeria,3,0
 J,Argentina,Austria,NA,NA
 J,Argentina,Jordan,NA,NA
 J,Algeria,Austria,NA,NA
 J,Algeria,Jordan,NA,NA
-J,Austria,Jordan,NA,NA
+J,Austria,Jordan,3,1
 K,Portugal,DR Congo,NA,NA
 K,Portugal,Uzbekistan,NA,NA
 K,Portugal,Colombia,NA,NA

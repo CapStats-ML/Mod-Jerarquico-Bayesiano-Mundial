@@ -20,7 +20,7 @@ nd <- list(
   beta    = c(310, 395),
   s_atq   = c(460, 395),
   s_def   = c(570, 395),
-  phi     = c(710, 395),
+  rho     = c(710, 395),
   alpha_k = c(460, 270),
   delta_k = c(570, 270),
   x_loc   = c(148, 158),
@@ -69,7 +69,7 @@ plot(NA, xlim = c(0, W), ylim = c(0, H), asp = 1,
 
 # ── Título ────────────────────────────────────────────────────────────────────
 text(W / 2, H - 14,
-     "Modelo Bayesiano Jerárquico — Binomial Negativo",
+     "Modelo Bayesiano Jerárquico — Poisson + Dixon-Coles",
      adj = c(0.5, 0.5), cex = 0.82, col = COL_DARK, font = 2L)
 segments(30, H - 26, W - 30, H - 26, col = "#cccccc", lwd = 0.7)
 
@@ -97,9 +97,9 @@ arr("elo",   "lambda")
 arr("alpha_k", "lambda")
 arr("delta_k", "lambda")
 
-# λ, φ → y_i
+# λ, ρ → y_i
 arr("lambda", "y_i")
-arr("phi",    "y_i")
+arr("rho",    "y_i")
 
 # ── Nodos ─────────────────────────────────────────────────────────────────────
 draw_node(nd$mu[1],      nd$mu[2],      "μ")
@@ -107,7 +107,7 @@ draw_node(nd$eta[1],     nd$eta[2],     "η")
 draw_node(nd$beta[1],    nd$beta[2],    "β")
 draw_node(nd$s_atq[1],   nd$s_atq[2],  "σ_α")
 draw_node(nd$s_def[1],   nd$s_def[2],  "σ_δ")
-draw_node(nd$phi[1],     nd$phi[2],     "φ")
+draw_node(nd$rho[1],     nd$rho[2],     "ρ")
 draw_node(nd$alpha_k[1], nd$alpha_k[2],"α[k]")
 draw_node(nd$delta_k[1], nd$delta_k[2],"δ[k]")
 draw_node(nd$x_loc[1],   nd$x_loc[2],  "x_loc",  observed = TRUE)
@@ -120,9 +120,9 @@ priors <- list(
   mu    = "N(0.3, 0.5)",
   eta   = "N(0.2, 0.3)",
   beta  = "N(0, 0.3)",
-  s_atq = "N(0, 0.3)",
-  s_def = "N(0, 0.3)",
-  phi   = "HC(0, 1)"
+  s_atq = "Exp(5)",
+  s_def = "Exp(5)",
+  rho   = "N(0, 0.1)"
 )
 for (nm in names(priors)) {
   text(nd[[nm]][1], nd[[nm]][2] + R_NODE + 13,
@@ -130,9 +130,13 @@ for (nm in names(priors)) {
 }
 
 # ── Ecuación del predictor lineal ─────────────────────────────────────────────
-text(130, 225,
+text(130, 235,
      expression(log(lambda[i]) == mu + alpha[k] - delta[j] + eta %.% x[i]^loc + beta %.% elo[i]),
      adj = c(0, 0.5), cex = 0.62, col = COL_DARK)
+text(130, 213,
+     expression(group("(", list(g[1], g[2]), ")") ~
+                "~  DC-Poisson(" * lambda[1] * ", " * lambda[2] * ", " * rho * ")"),
+     adj = c(0, 0.5), cex = 0.58, col = COL_PRIOR)
 
 # ── Leyenda ───────────────────────────────────────────────────────────────────
 lx <- 15; ly <- 185

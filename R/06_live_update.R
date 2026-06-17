@@ -4,20 +4,79 @@ library(readr)
 library(tidyr)
 library(purrr)
 library(stringr)
+library(lubridate)
 
 # ── Flujo de uso ───────────────────────────────────────────────────────────────
-#
-# 1. Después de cada partido, abre data/live/resultados_reales.csv y escribe
-#    los goles reales en las columnas g1 y g2 de esa fila.
-#    Deja g1/g2 como NA en los partidos aún no jugados.
-#
-# 2. Corre: source("R/06_live_update.R")
-#
-# 3. Se regeneran output/tables/ y output/figures/ con probabilidades actualizadas.
-#    Los partidos jugados tienen resultado fijo en todos los escenarios;
-#    solo los pendientes se simulan → la incertidumbre colapsa a medida que
-#    avanza el torneo.
+# Corre source("R/06_live_update.R") después de cada jornada.
+# Los resultados reales se descargan automáticamente de martj42/international_results
+# (misma fuente que el modelo histórico, actualizada en tiempo casi real).
 # ──────────────────────────────────────────────────────────────────────────────
+
+# ── 0. Auto-sincronizar resultados reales desde martj42 ──────────────────────
+
+fetch_wc_results <- function(path = "data/live/resultados_reales.csv") {
+  url <- "https://raw.githubusercontent.com/martj42/international_results/master/results.csv"
+
+  history_live <- tryCatch(
+    read_csv(url, show_col_types = FALSE, progress = FALSE),
+    error = function(e) {
+      message("  ⚠ Sin conexión — usando CSV existente sin actualizar")
+      return(NULL)
+    }
+  )
+  if (is.null(history_live)) return(invisible(FALSE))
+
+  wc2026 <- history_live |>
+    filter(
+      str_detect(tournament, regex("FIFA World Cup", ignore_case = TRUE)),
+      !str_detect(tournament, regex("qualif|eliminat", ignore_case = TRUE)),
+      year(date) == 2026,
+      !is.na(home_score), !is.na(away_score)
+    )
+
+  if (nrow(wc2026) == 0) {
+    message("  Sin resultados del Mundial 2026 en la fuente todavía.")
+    return(invisible(FALSE))
+  }
+
+  resultados <- read_csv(path, show_col_types = FALSE)
+  n_new <- 0L
+
+  for (i in seq_len(nrow(wc2026))) {
+    home <- wc2026$home_team[i]
+    away <- wc2026$away_team[i]
+    gh   <- as.integer(wc2026$home_score[i])
+    ga   <- as.integer(wc2026$away_score[i])
+
+    idx <- which(
+      (resultados$equipo1 == home & resultados$equipo2 == away) |
+      (resultados$equipo1 == away & resultados$equipo2 == home)
+    )
+    if (length(idx) == 0) next
+    idx <- idx[1]
+
+    # Solo actualizar si aún está en NA (no sobreescribir correcciones manuales)
+    if (!is.na(resultados$g1[idx])) next
+
+    if (resultados$equipo1[idx] == home) {
+      resultados$g1[idx] <- gh
+      resultados$g2[idx] <- ga
+    } else {
+      resultados$g1[idx] <- ga
+      resultados$g2[idx] <- gh
+    }
+    n_new <- n_new + 1L
+  }
+
+  write_csv(resultados, path)
+
+  n_total <- sum(!is.na(resultados$g1))
+  message(sprintf("  ✓ %d partidos nuevos añadidos  (%d/72 completados)", n_new, n_total))
+  invisible(TRUE)
+}
+
+message("── 0. Sincronizando resultados reales... ──")
+fetch_wc_results("data/live/resultados_reales.csv")
 
 # ── 1. Cargar resultados reales ───────────────────────────────────────────────
 
@@ -47,11 +106,20 @@ if (nrow(pendientes) == 0) {
 # ── 2. Cargar modelo y draws del posterior ────────────────────────────────────
 
 message("\nCargando modelo y draws...")
-fit_B       <- readRDS("output/posteriors/fit_B_wc_vs_wc.rds")
 elo_ratings <- read_csv("data/processed/elo_ratings.csv", show_col_types = FALSE)
 elo_lookup  <- as.list(setNames(elo_ratings$elo, elo_ratings$team))
 
-draws_df <- as_draws_df(fit_B)
+dc_path <- "output/posteriors/draws_DC_wc_vs_wc.rds"
+use_dc  <- file.exists(dc_path)
+
+if (use_dc) {
+  message("Modelo: Dixon-Coles (Poisson + corrección ρ)")
+  draws_df <- readRDS(dc_path)
+} else {
+  message("Modelo: NegBinomial brms (Modelo B)")
+  fit_B    <- readRDS("output/posteriors/fit_B_wc_vs_wc.rds")
+  draws_df <- as_draws_df(fit_B)
+}
 
 extract_re <- function(draws, prefix) {
   pattern <- paste0(prefix, "[")
@@ -67,6 +135,7 @@ ataque     <- extract_re(draws_df, "r_equipo")
 defensa    <- extract_re(draws_df, "r_rival")
 intercepto <- draws_df$b_Intercept
 b_elo      <- draws_df$b_elo_diff
+rho_s      <- if (use_dc && "rho" %in% names(draws_df)) as.numeric(draws_df$rho) else NULL
 n_draws    <- length(intercepto)
 
 get_re <- function(re_df, team, n) {
@@ -86,6 +155,7 @@ int_s   <- intercepto[idx]
 b_elo_s <- b_elo[idx]
 atk     <- as.data.frame(ataque[idx, , drop = FALSE])
 def     <- as.data.frame(defensa[idx, , drop = FALSE])
+rho_sim <- if (!is.null(rho_s)) rho_s[idx] else NULL
 
 # Construir sims de partidos jugados (resultado idéntico en todos los escenarios)
 if (nrow(jugados) > 0) {
@@ -120,6 +190,20 @@ if (nrow(pendientes) > 0) {
 
     g1 <- rpois(n_sim, lambda1)
     g2 <- rpois(n_sim, lambda2)
+
+    if (!is.null(rho_sim)) {
+      tau        <- rep(1.0, n_sim)
+      m00 <- g1 == 0L & g2 == 0L
+      m10 <- g1 == 1L & g2 == 0L
+      m01 <- g1 == 0L & g2 == 1L
+      m11 <- g1 == 1L & g2 == 1L
+      if (any(m00)) tau[m00] <- pmax(1 - lambda1[m00] * lambda2[m00] * rho_sim[m00], 1e-10)
+      if (any(m10)) tau[m10] <- pmax(1 + lambda2[m10] * rho_sim[m10],               1e-10)
+      if (any(m01)) tau[m01] <- pmax(1 + lambda1[m01] * rho_sim[m01],               1e-10)
+      if (any(m11)) tau[m11] <- pmax(1 - rho_sim[m11],                              1e-10)
+      dc_idx <- sample.int(n_sim, n_sim, replace = TRUE, prob = tau / sum(tau))
+      g1 <- g1[dc_idx]; g2 <- g2[dc_idx]
+    }
 
     sims_pend_list[[i]] <- tibble(
       sim_id  = seq_len(n_sim),
@@ -291,3 +375,117 @@ message("✓ output/figures/grupos_probabilidades.pdf  actualizado")
 
 jugados_pct <- round(nrow(jugados) / 72 * 100)
 message(sprintf("\n── Avance del torneo: %d/72 partidos jugados (%d%%) ──", nrow(jugados), jugados_pct))
+
+# ── 10. Mapa de calor de marcadores (distribución predictiva + resultado real) ─
+# Para partidos jugados: re-simula con el modelo para obtener la distribución
+# predictiva y luego marca el resultado real con un círculo dorado.
+# Para partidos pendientes: solo muestra la distribución.
+
+if (nrow(jugados) > 0) {
+  message("\nGenerando distribuciones predictivas para heatmaps...")
+  viz_list <- vector("list", nrow(jugados))
+  for (i in seq_len(nrow(jugados))) {
+    t1  <- jugados$equipo1[i]; t2 <- jugados$equipo2[i]
+    elo1 <- if (!is.null(elo_lookup[[t1]])) elo_lookup[[t1]] else 1500
+    elo2 <- if (!is.null(elo_lookup[[t2]])) elo_lookup[[t2]] else 1500
+    ed   <- (elo1 - elo2) / 400
+    lam1 <- exp(int_s + get_re(atk, t1, n_sim) - get_re(def, t2, n_sim) + b_elo_s *  ed)
+    lam2 <- exp(int_s + get_re(atk, t2, n_sim) - get_re(def, t1, n_sim) + b_elo_s * -ed)
+    viz_list[[i]] <- tibble(
+      sim_id  = seq_len(n_sim),
+      group   = jugados$group[i],
+      equipo1 = t1, equipo2 = t2,
+      g1      = rpois(n_sim, lam1),
+      g2      = rpois(n_sim, lam2)
+    )
+  }
+  sims_jugados_viz <- bind_rows(viz_list)
+} else {
+  sims_jugados_viz <- tibble()
+}
+
+sims_viz <- bind_rows(
+  sims_jugados_viz,
+  sims_pendientes |> select(sim_id, group, equipo1, equipo2, g1, g2)
+)
+
+plot_score_heatmap_live <- function(t1, t2, grp, sub_sims,
+                                    real_g1 = NA, real_g2 = NA, max_g = 10) {
+  g1c   <- pmin(sub_sims$g1, max_g)
+  g2c   <- pmin(sub_sims$g2, max_g)
+  tab   <- table(factor(g1c, levels = 0:max_g), factor(g2c, levels = 0:max_g))
+  probs <- tab / sum(tab)
+
+  ax_labels <- c(as.character(0:(max_g - 1L)), paste0(max_g, "+"))
+  pal        <- colorRampPalette(c("#f7fbff", "#1a6fba"))(100)
+
+  jugado <- !is.na(real_g1) && !is.na(real_g2)
+  titulo <- sprintf("Grupo %s  |  %s vs %s", grp, t1, t2)
+  if (jugado) titulo <- paste0(titulo, sprintf("  [FINAL: %d–%d]", real_g1, real_g2))
+
+  image(0:max_g, 0:max_g, probs,
+        col  = pal, zlim = c(0, max(probs)),
+        xlab = t1, ylab = t2,
+        main = titulo, axes = FALSE, cex.main = 0.78)
+
+  axis(1, at = 0:max_g, labels = ax_labels, cex.axis = 0.72)
+  axis(2, at = 0:max_g, labels = ax_labels, cex.axis = 0.72, las = 2)
+
+  for (i in 0:max_g) {
+    for (j in 0:max_g) {
+      pct <- round(probs[i + 1L, j + 1L] * 100)
+      if (pct >= 1L) {
+        col_txt <- if (probs[i + 1L, j + 1L] > max(probs) * 0.55) "white" else "grey20"
+        text(i, j, paste0(pct, "%"), cex = 0.6, col = col_txt, font = 2)
+      }
+    }
+  }
+
+  abline(0, 1, col = "grey50", lty = 2, lwd = 0.9)
+
+  if (jugado) {
+    rg1c <- min(as.integer(real_g1), max_g)
+    rg2c <- min(as.integer(real_g2), max_g)
+    points(rg1c, rg2c, pch = 21, bg = "#FFD700", col = "black", cex = 3.0, lwd = 1.5)
+    text(rg1c, rg2c,
+         sprintf("%d–%d", as.integer(real_g1), as.integer(real_g2)),
+         cex = 0.65, font = 2, col = "black")
+  }
+
+  box()
+}
+
+all_matches <- bind_rows(
+  jugados   |> mutate(jugado = TRUE),
+  pendientes |> mutate(jugado = FALSE)
+) |> arrange(group, equipo1)
+
+pdf("output/figures/heatmap_marcadores_live.pdf", width = 14, height = 10)
+
+for (grp in sort(unique(all_matches$group))) {
+  df_grp    <- all_matches |> filter(group == grp)
+  n_sim_grp <- sims_viz |> filter(group == grp) |> pull(sim_id) |> n_distinct()
+
+  par(mfrow = c(2, 3), mar = c(4, 4, 3, 1), oma = c(0, 0, 2.5, 0))
+
+  for (i in seq_len(nrow(df_grp))) {
+    t1       <- df_grp$equipo1[i]
+    t2       <- df_grp$equipo2[i]
+    sub_sims <- sims_viz |> filter(equipo1 == t1, equipo2 == t2)
+    if (nrow(sub_sims) == 0) next
+
+    real_g1 <- if (df_grp$jugado[i]) df_grp$g1[i] else NA
+    real_g2 <- if (df_grp$jugado[i]) df_grp$g2[i] else NA
+
+    plot_score_heatmap_live(t1, t2, grp, sub_sims,
+                            real_g1 = real_g1, real_g2 = real_g2, max_g = 10)
+  }
+
+  n_jug <- sum(df_grp$jugado)
+  mtext(sprintf("Grupo %s  —  %d/6 partidos jugados  (n = %s sims predictivas)",
+                grp, n_jug, format(n_sim_grp, big.mark = ",")),
+        outer = TRUE, cex = 1.1, font = 2)
+}
+
+dev.off()
+message("✓ Guardado: output/figures/heatmap_marcadores_live.pdf")
