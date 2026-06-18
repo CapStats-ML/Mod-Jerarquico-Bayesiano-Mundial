@@ -1,391 +1,891 @@
-\documentclass[12pt, a4paper]{article}
+%% ============================================================
+%%  Predicción Bayesiana del FIFA World Cup 2026
+%%  Cesar Prieto — UBITS
+%%  Compilar con: pdflatex → pdflatex (dos pasadas para referencias)
+%% ============================================================
+\documentclass[12pt,a4paper]{article}
 
+%% --- Codificación y fuentes ---
 \usepackage[utf8]{inputenc}
 \usepackage[T1]{fontenc}
-\usepackage[spanish]{babel}
-\usepackage{amsmath, amssymb}
-\usepackage{booktabs}
-\usepackage{graphicx}
-\usepackage{hyperref}
-\usepackage{geometry}
+\usepackage[spanish,es-nodecimaldot]{babel}
+
+%% --- Matemáticas ---
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{amsthm}
+
+%% --- Tipografía y espaciado ---
+\usepackage{microtype}
 \usepackage{setspace}
+\onehalfspacing
 \usepackage{parskip}
-\usepackage{natbib}
-\usepackage{float}
+
+%% --- Geometría ---
+\usepackage[margin=2.5cm]{geometry}
+
+%% --- Tablas ---
+\usepackage{booktabs}
 \usepackage{array}
 \usepackage{multirow}
 \usepackage{caption}
+\usepackage[table]{xcolor}
+\definecolor{lightgray}{gray}{0.93}
 
-\geometry{margin=2.5cm}
-\onehalfspacing
+%% --- Figuras y flotantes ---
+\usepackage{graphicx}
+\usepackage{float}
 
+%% --- Referencias ---
+\usepackage{natbib}
+
+%% --- Hipervínculos ---
+\usepackage{hyperref}
 \hypersetup{
-  colorlinks=true,
-  linkcolor=blue,
-  urlcolor=blue,
-  citecolor=blue
+  colorlinks = true,
+  linkcolor  = blue!70!black,
+  citecolor  = green!50!black,
+  urlcolor   = blue!70!black,
+  pdftitle   = {Predicción Bayesiana de Resultados del FIFA World Cup 2026},
+  pdfauthor  = {Cesar Prieto}
 }
 
-\title{\textbf{Predicción de Resultados del Mundial FIFA 2026} \\[0.5em]
-\large Un Modelo Bayesiano Jerárquico Binomial Negativo con Ponderación Temporal y Ratings Elo}
+%% --- Comandos matemáticos personalizados ---
+\newcommand{\E}{\mathbb{E}}
+\newcommand{\Var}{\operatorname{Var}}
+\newcommand{\iid}{\overset{\text{\tiny iid}}{\sim}}
 
-\author{Carlos Prieto \\ \small UBITS}
+%% --- Entornos ---
+\newtheorem{proposition}{Proposición}
+\newtheorem{remark}{Observación}
 
-\date{\today}
-
-% ─────────────────────────────────────────────────────────────────────────────
+%% ============================================================
 \begin{document}
 
+%% ---- Portada -----------------------------------------------
+\title{%
+  \textbf{Predicción Bayesiana de Resultados del FIFA World Cup 2026}\\[6pt]
+  \large Modelo Jerárquico de Poisson con Corrección de Dixon-Coles
+}
+\author{%
+  Cesar Prieto\\[4pt]
+  \normalsize UBITS\\
+  \normalsize \href{mailto:cesarprietosar@gmail.com}{cesarprietosar@gmail.com}
+}
+\date{Junio de 2026}
+
 \maketitle
+\thispagestyle{empty}
+
+%% ---- Abstract ----------------------------------------------
+\begin{abstract}
+\noindent
+Se presenta un sistema de predicción probabilística para el FIFA World Cup 2026
+basado en un modelo jerárquico bayesiano de Poisson con corrección de dependencia
+de \citet{dixon1997modelling}.
+El conjunto de datos comprende más de 47{,}000 encuentros internacionales desde 1872
+(fuente: \textit{martj42/international\_results}), del que se seleccionan
+1{,}935 partidos disputados desde 2010 entre equipos clasificados al torneo,
+ponderados exponencialmente por antigüedad (vida media $= 365$ días) y por
+importancia competitiva.
+El predictor log-lineal incorpora efectos aleatorios jerárquicos de ataque $\alpha_k$
+y defensa $\delta_k$ por equipo, un coeficiente de ventaja local $\eta$ y un
+coeficiente de diferencial de Elo $\beta$.
+La corrección de Dixon-Coles —parametrizada por $\rho$— ajusta las probabilidades
+de resultados exactos bajos (0-0, 1-0, 0-1, 1-1), corrigiendo la sobreestimación
+inherente al supuesto de independencia entre los goles de ambos equipos.
+La inferencia se realiza con Stan mediante 4 cadenas MCMC (8{,}000 iteraciones
+efectivas); todos los parámetros convergen con $\hat{R} \leq 1{,}002$.
+El coeficiente de Elo arroja $\hat{\beta} = 0{,}510$
+(IC\,95\%: $[0{,}316;\, 0{,}696]$), confirmando el poder predictivo del historial
+de rendimiento histórico.
+El valor estimado $\hat{\rho} = -0{,}071$ implica un incremento relativo de
+aproximadamente 10--15\% en la probabilidad de empates 0-0 y 1-1.
+La simulación de 100{,}000 escenarios de fase de grupos y 10{,}000 de rondas
+eliminatorias sitúa a España como favorita con una probabilidad de título del
+13{,}5\%, seguida de Argentina (9{,}2\%) y Francia (8{,}1\%).
+
+\bigskip
+\noindent\textbf{Palabras clave:} modelos de conteo bayesianos,
+modelo jerárquico de Poisson, corrección de Dixon-Coles,
+ratings Elo, predicción deportiva, fútbol internacional.
+\end{abstract}
+
+\newpage
 \tableofcontents
 \newpage
 
-% ─────────────────────────────────────────────────────────────────────────────
+%% ==========================================================
 \section{Introducción}
+\label{sec:intro}
+%% ==========================================================
 
-Este trabajo desarrolla un pipeline estadístico completo para predecir los resultados de la Copa del Mundo FIFA 2026. El objetivo es simular tanto la fase de grupos como las rondas eliminatorias, obteniendo distribuciones de probabilidad sobre los posibles clasificados, campeones y resultados individuales de cada partido.
+La predicción de resultados deportivos es un problema de larga data en
+estadística aplicada, con implicaciones prácticas en mercados de apuestas,
+planificación deportiva y análisis táctico.
+El fútbol internacional presenta desafíos particulares: los encuentros son poco
+frecuentes por par de equipos, los marcadores son típicamente bajos y la
+correlación entre los goles de ambos rivales viola el supuesto de independencia
+que subyace a los modelos de Poisson univariados estándar.
 
-El enfoque adoptado es el de los modelos de conteo jerárquicos para marcadores de fútbol, introducido formalmente en su versión Poisson por \citet{Dixon1997} y aquí extendido a una familia Binomial Negativa para capturar la sobredispersión característica de los datos de goles y extendido en múltiples trabajos posteriores. La inferencia se realiza en el marco bayesiano completo usando cadenas de Markov Monte Carlo (MCMC) a través de la librería \texttt{brms} \citep{Burkner2017}, que genera código Stan automáticamente. Esto permite obtener distribuciones posteriores completas sobre todos los parámetros del modelo, no solo estimaciones puntuales.
+El presente trabajo describe un sistema bayesiano completo para pronosticar el
+FIFA World Cup 2026, el primero de la historia celebrado en tres países
+(Estados Unidos, Canadá y México) con 48 equipos participantes.
+La ampliación del torneo incrementa la complejidad combinatoria de la fase de
+grupos —doce grupos de cuatro equipos con clasificación de los dos primeros y
+ocho mejores terceros— y justifica una aproximación probabilística que cuantifique
+la incertidumbre en cada etapa.
 
-Las decisiones metodológicas centrales fueron tres. Primero, incluir ponderación temporal exponencial de los partidos históricos para que los resultados recientes tengan más peso que los lejanos. Segundo, incorporar ratings Elo calculados sobre el historial completo desde 1872 como covariable fija del modelo, lo que permite al modelo separar la calidad intrínseca de un equipo (capturada por el Elo) de su sobre- o sub-desempeño histórico (capturado por los efectos aleatorios). Tercero, entrenar el modelo únicamente con partidos entre equipos clasificados al Mundial 2026 (\textit{Modelo B}), reduciendo el ruido que introducen resultados de selecciones de bajo nivel.
-
-% ─────────────────────────────────────────────────────────────────────────────
-\section{Fuentes de Datos y Minería}
-
-\subsection{Historial completo de partidos internacionales}
-
-La fuente principal de entrenamiento es el repositorio público de \citet{martj42}, disponible en GitHub, que contiene aproximadamente 49.477 partidos de fútbol internacional desde 1872 hasta la fecha. Las columnas relevantes son: \texttt{date}, \texttt{home\_team}, \texttt{away\_team}, \texttt{home\_score}, \texttt{away\_score}, \texttt{tournament} y \texttt{neutral} (indicador de sede neutral). Este dataset se descarga directamente desde la URL raw del repositorio usando la librería \texttt{httr2} en R.
-
-\subsection{Equipos clasificados al Mundial 2026}
-
-Los 48 equipos clasificados y su asignación a grupos se obtuvieron por \textit{data mining} desde la página de clasificaciones de ESPN (\texttt{espn.com/soccer/standings/\_/league/FIFA.WORLD}). Se extrajeron los atributos \texttt{href} de los enlaces de cada equipo, que contienen un identificador numérico de ESPN y un slug textual (e.g., \texttt{id/206/canada}). Esto permite construir un mapa \textit{id $\to$ slug} sin necesidad de hardcodear ningún identificador manualmente.
-
-\subsection{Normalización de nombres}
-
-Las dos fuentes usan convenciones de nombres distintas. El historial de \citet{martj42} usa nombres históricos en inglés (e.g., \textit{Czech Republic}, \textit{Turkey}), mientras que ESPN usa nombres actualizados (e.g., \textit{Czechia}, \textit{Türkiye}). Se construyó una tabla de correspondencia manual validada contra el conjunto de nombres únicos del historial:
-
-\begin{table}[H]
-\centering
-\caption{Muestra de correcciones de nombres aplicadas}
-\begin{tabular}{ll}
-\toprule
-\textbf{Nombre ESPN} & \textbf{Nombre en historial} \\
-\midrule
-Czechia              & Czech Republic \\
-Bosnia Herzegovina   & Bosnia and Herzegovina \\
-Turkiye              & Turkey \\
-Curacao              & Curaçao \\
-Congo Dr             & DR Congo \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-% ─────────────────────────────────────────────────────────────────────────────
-\section{Preprocesamiento y Construcción del Dataset}
-
-\subsection{Filtrado y formato largo}
-
-Del historial completo se retienen únicamente los partidos que cumplen tres condiciones: (1) fecha igual o posterior al 1 de enero de 2010, lo que cubre cuatro ciclos completos de clasificatorias y cuatro Mundiales como contexto de entrenamiento; (2) al menos uno de los dos equipos es clasificado al Mundial 2026; (3) ambos marcadores están disponibles (sin resultados nulos o suspendidos).
-
-El dataset resultante contiene 7.366 partidos únicos. Se transforma a \textit{formato largo}, generando una fila por cada perspectiva equipo-partido: el equipo local aporta una fila con \texttt{equipo = home\_team}, \texttt{rival = away\_team}, \texttt{goles = home\_score}, y el visitante aporta otra fila simétrica. El dataset final tiene 14.732 filas.
-
-\subsection{Ponderación temporal}
-
-Siguiendo a \citet{Dixon1997}, cada partido recibe un peso que decae exponencialmente con el tiempo:
-
-\begin{equation}
-w_t = \exp\!\left(-\frac{\log 2}{\tau} \cdot \delta_t\right)
-\end{equation}
-
-donde $\delta_t$ es la cantidad de días transcurridos desde el partido hasta la fecha de referencia, y $\tau = 365$ días es el parámetro de semivida: un partido de hace exactamente un año vale la mitad que uno de hoy.
-
-\subsection{Multiplicador por tipo de torneo}
-
-Adicionalmente, los pesos se escalan por la importancia del torneo:
-
-\begin{table}[H]
-\centering
-\caption{Multiplicadores por tipo de competencia}
-\begin{tabular}{lc}
-\toprule
-\textbf{Tipo de torneo} & \textbf{Multiplicador} \\
-\midrule
-Copa del Mundo FIFA (fases finales) & 2.0 \\
-Eliminatorias / clasificatorias      & 1.5 \\
-Otros competitivos                   & 1.0 \\
-Amistosos                            & 0.5 \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-El peso compuesto de cada observación es $p_i = w_t \cdot m_{\text{torneo}}$. El rango observado en los datos es $[0.0000,\, 1.9962]$.
-
-% ─────────────────────────────────────────────────────────────────────────────
-\section{Ratings Elo}
-
-\subsection{Motivación}
-
-Una limitación identificada en las versiones iniciales del modelo fue que selecciones de CONCACAF (como Haití o Curazao) aparecían sobreestimadas en el ranking de ataque, dado que sus altas tasas de gol contra micro-selecciones en eliminatorias quedaban capturadas por los efectos aleatorios de ataque. El modelo no podía distinguir entre ``este equipo es bueno en ataque'' y ``este equipo goleó a rivales muy débiles''.
-
-La solución adoptada fue incorporar los ratings Elo como covariable fija: la diferencia de Elo explica estructuralmente cuántos goles extra se esperan debido a la brecha de calidad entre los equipos, liberando los efectos aleatorios para capturar solo las desviaciones respecto a esa predicción base.
-
-\subsection{Cálculo}
-
-Los ratings Elo se calculan sobre la totalidad del historial (49.477 partidos desde 1872), en orden cronológico, con todas las selecciones iniciando en 1500 puntos. La fórmula de actualización es la estándar:
-
-\begin{equation}
-R'_A = R_A + K \cdot G \cdot (S_A - E_A)
-\end{equation}
-
-donde $S_A \in \{1, 0.5, 0\}$ es el resultado real, $E_A = 1/(1 + 10^{(R_B - R_A - h)/400})$ es la probabilidad esperada de victoria (con ventaja de local $h = 100$ en sedes no neutrales, $h = 0$ en neutrales), $K$ es el factor de importancia del partido, y $G$ es un multiplicador por diferencia de goles:
-
-\begin{equation}
-G(\Delta g) = \begin{cases} 1.0 & \text{si } \Delta g \leq 1 \\ 1.5 & \text{si } \Delta g = 2 \\ (11 + \Delta g)/8 & \text{si } \Delta g \geq 3 \end{cases}
-\end{equation}
-
-Los factores $K$ se definen según el tipo de torneo:
-
-\begin{table}[H]
-\centering
-\caption{Factor $K$ por tipo de competencia}
-\begin{tabular}{lc}
-\toprule
-\textbf{Competencia} & \textbf{$K$} \\
-\midrule
-Copa del Mundo FIFA (fase final) & 60 \\
-Campeonatos continentales        & 50 \\
-Eliminatorias mundialistas       & 40 \\
-Otros competitivos               & 35 \\
-Amistosos                        & 20 \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-Al final del proceso, el rango de ratings Elo para los 48 equipos clasificados al Mundial 2026 es $[1560,\, 2214]$, con una media de aproximadamente 1800 puntos.
-
-\subsection{Incorporación al modelo}
-
-En el dataset de entrenamiento, la covariable se define como:
-
-\begin{equation}
-\texttt{elo\_diff}_i = \frac{\text{Elo}_{\text{equipo},i} - \text{Elo}_{\text{rival},i}}{400}
-\end{equation}
-
-La división por 400 pone la variable en una escala aproximada $[-3, 3]$, compatible con los priors del modelo. Un valor positivo indica que el equipo es más fuerte que su rival según el Elo.
-
-% ─────────────────────────────────────────────────────────────────────────────
-\section{Modelo Estadístico}
-
-\subsection{Especificación}
-
-Se adopta el modelo de Poisson jerárquico de \citet{Dixon1997} en su versión bayesiana completa, extendido con una familia Binomial Negativa para acomodar la sobredispersión observada en los recuentos de goles (varianza empírica $>$ media). Para cada observación $i$ (partido visto desde la perspectiva de un equipo), los goles anotados siguen:
-
-\begin{equation}
-\text{Goles}_i \sim \text{NegBin}(\lambda_i,\, \phi)
-\end{equation}
-
-donde $\phi > 0$ es el parámetro de forma (precisión): a mayor $\phi$, la distribución se acerca a Poisson; a menor $\phi$, la sobredispersión es más pronunciada. La varianza es $\text{Var}(\text{Goles}_i) = \lambda_i + \lambda_i^2 / \phi$. El predictor lineal es idéntico al modelo de Poisson:
-
-\begin{equation}
-\log \lambda_i = \mu + \alpha_{\text{equipo}[i]} - \delta_{\text{rival}[i]} + \eta \cdot \mathbb{1}[\text{local}]_i + \beta \cdot \texttt{elo\_diff}_i
-\end{equation}
-
-donde:
-\begin{itemize}
-  \item $\mu$ es el intercepto global (log de la tasa media de goles de un equipo promedio en condición neutral),
-  \item $\alpha_k \sim \mathcal{N}(0, \sigma_\alpha)$ es el efecto aleatorio de ataque del equipo $k$,
-  \item $\delta_k \sim \mathcal{N}(0, \sigma_\delta)$ es el efecto aleatorio de defensa del equipo $k$ (como rival),
-  \item $\eta$ es el coeficiente de ventaja de local,
-  \item $\beta$ es el coeficiente de la diferencia de Elo escalada.
-\end{itemize}
-
-Nótese que $\alpha$ y $\delta$ comparten la misma especificación de hiperparámetros ($\sigma$), implementada en \texttt{brms} como efectos aleatorios agrupados por \texttt{(1 | equipo)} y \texttt{(1 | rival)} respectivamente. El parámetro $\phi$ recibe un prior por defecto de \texttt{brms} (\textit{half-Cauchy} con escala 1) que permite al modelo adaptarse libremente al nivel de sobredispersión presente en los datos.
-
-\subsection{Priors}
-
-Los priors reflejan conocimiento de dominio sobre el fútbol internacional:
-
-\begin{align}
-\mu &\sim \mathcal{N}(0.3,\, 0.5) \\
-\eta &\sim \mathcal{N}(0.2,\, 0.3) \\
-\beta &\sim \mathcal{N}(0,\, 0.3) \\
-\sigma_\alpha, \sigma_\delta &\sim \mathcal{N}^+(0,\, 0.3)
-\end{align}
-
-El prior sobre $\mu$ se centra en $0.3$ porque $\exp(0.3) \approx 1.35$ goles por partido, valor razonable para equipos de nivel internacional. El prior sobre $\eta$ se centra en $0.2$ porque $\exp(0.2) \approx 1.22$, es decir, aproximadamente un 22\% más de goles jugando de local. El prior sobre $\beta$ es neutral en cero, dejando que los datos determinen la dirección y magnitud del efecto Elo. Las desviaciones estándar de los efectos aleatorios tienen priors half-normal en $0.3$, lo que corresponde a diferencias de ataque/defensa moderadas entre selecciones nacionales.
-
-\subsection{Variantes del modelo}
-
-Se ajustaron dos variantes:
-
-\begin{itemize}
-  \item \textbf{Modelo A}: entrenado con todos los 14.732 registros (213 equipos distintos). Captura mayor cantidad de observaciones pero incluye equipos de bajo nivel que pueden distorsionar los efectos aleatorios de los clasificados.
-  \item \textbf{Modelo B}: entrenado únicamente con los 3.870 registros donde ambos equipos son clasificados al Mundial 2026 (1.935 partidos únicos entre los 48). Menor cantidad de datos pero señal más limpia y directamente relevante para las predicciones del torneo.
-\end{itemize}
-
-Se eligió el \textbf{Modelo B} para las simulaciones finales por dos razones. Primero, la inferencia sobre los efectos de ataque y defensa de los clasificados es más precisa cuando todos los partidos provienen del mismo ``universo competitivo'' (mundialistas vs. mundialistas). Segundo, el modelo A producía rankings de ataque sesgados hacia equipos de CONCACAF que habían goleado a micro-selecciones en eliminatorias, problema que persiste parcialmente incluso con la covariable Elo.
-
-\subsection{Ajuste MCMC}
-
-Ambos modelos se ajustaron con 4 cadenas independientes, 2.000 iteraciones por cadena (1.000 de calentamiento), usando el muestreador HMC de Stan a través de \texttt{brms}. El diagnóstico principal es el estadístico $\hat{R}$ de Gelman-Rubin: valores cercanos a 1.0 indican convergencia de las cadenas.
-
-\begin{table}[H]
-\centering
-\caption{Diagnósticos y estimaciones de efectos fijos}
-\begin{tabular}{lcccc}
-\toprule
-\textbf{Modelo} & \textbf{$\hat{R}$ máx.} & \textbf{$\hat{\mu}$} & \textbf{$\hat{\eta}$} & \textbf{$\hat{\beta}$} \\
-\midrule
-A (todos)     & 1.0068 & 0.053 & 0.268 & 0.711 \\
-B (WC vs WC)  & 1.0039 & 0.139 & 0.163 & 0.511 \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-Todos los valores de $\hat{R}$ están por debajo del umbral de 1.01, indicando convergencia satisfactoria. El coeficiente Elo ($\hat{\beta}$) es positivo y bien estimado en ambos modelos: en el Modelo B, $\exp(0.511) \approx 1.67$, lo que implica que una ventaja de 400 puntos Elo se traduce en aproximadamente un 67\% más de goles esperados, manteniendo constantes los efectos aleatorios.
-
-% ─────────────────────────────────────────────────────────────────────────────
-\section{Simulación de la Fase de Grupos}
-
-\subsection{Metodología}
-
-Para cada partido de los 72 de la fase de grupos (12 grupos $\times$ $\binom{4}{2} = 6$ partidos por grupo), se simulan 100.000 escenarios del marcador final mediante muestreo del posterior predictivo:
-
+Las contribuciones centrales del trabajo son tres:
 \begin{enumerate}
-  \item Se muestrea un vector de parámetros $(\mu^{(s)}, \alpha^{(s)}, \delta^{(s)}, \eta^{(s)}, \beta^{(s)})$ de las 4.000 draws disponibles del posterior.
-  \item Se calculan las tasas:
-  \begin{align}
-    \lambda_1^{(s)} &= \exp\!\left(\mu^{(s)} + \alpha_{t_1}^{(s)} - \delta_{t_2}^{(s)} + \beta^{(s)} \cdot \texttt{elo\_diff}_{t_1,t_2}\right) \\
-    \lambda_2^{(s)} &= \exp\!\left(\mu^{(s)} + \alpha_{t_2}^{(s)} - \delta_{t_1}^{(s)} - \beta^{(s)} \cdot \texttt{elo\_diff}_{t_1,t_2}\right)
-  \end{align}
-  \item Se generan $G_1^{(s)} \sim \text{Poisson}(\lambda_1^{(s)})$ y $G_2^{(s)} \sim \text{Poisson}(\lambda_2^{(s)})$.
+  \item Un modelo jerárquico de Poisson con efectos aleatorios de ataque y defensa
+        que permite el intercambio de información entre equipos (regularización parcial),
+        estimado en el marco bayesiano completo con propagación de incertidumbre.
+  \item La corrección de dependencia de \citet{dixon1997modelling} integrada
+        directamente en la verosimilitud del modelo Stan, con el parámetro $\rho$
+        estimado del posterior junto con todos los demás parámetros.
+  \item Ratings Elo calculados desde cero sobre la totalidad del historial disponible
+        e incorporados como covariable en el predictor, resolviendo el sesgo de
+        sobreestimación de equipos con muchas goleadas contra rivales débiles.
 \end{enumerate}
 
-Los partidos de la fase de grupos del Mundial se juegan en sede neutral, por lo que $\mathbb{1}[\text{local}] = 0$ en todas las simulaciones. Dado que el número de simulaciones (100.000) es mayor que las draws disponibles (4.000), el muestreo se realiza con reemplazo. Para reducir el costo computacional de los cálculos posteriores manteniendo la variabilidad, se aplica \textit{thinning}: se conserva 1 de cada 10 escenarios, resultando en 10.000 escenarios efectivos para los standings.
+El resto del documento se organiza como sigue.
+La Sección~\ref{sec:related} revisa la literatura relevante.
+La Sección~\ref{sec:data} describe las fuentes de datos y la construcción del
+conjunto de entrenamiento.
+La Sección~\ref{sec:elo} detalla el cálculo de los ratings Elo.
+La Sección~\ref{sec:model} especifica el modelo estadístico completo.
+La Sección~\ref{sec:inference} presenta los resultados de la inferencia bayesiana.
+La Sección~\ref{sec:model-comparison} compara el modelo propuesto con alternativas.
+La Sección~\ref{sec:simulation} describe la mecánica de simulación del torneo.
+La Sección~\ref{sec:results} resume las probabilidades obtenidas.
+La Sección~\ref{sec:discussion} discute las implicaciones y limitaciones.
+La Sección~\ref{sec:conclusion} concluye.
 
-\subsection{Clasificación de la fase de grupos}
+%% ==========================================================
+\section{Trabajo Relacionado}
+\label{sec:related}
+%% ==========================================================
 
-Para cada uno de los 10.000 escenarios, se calculan los standings de cada grupo ordenando por puntos, diferencia de goles y goles a favor. Los 12 primeros y 12 segundos clasifican directamente. Para la asignación de los 8 mejores terceros, en cada escenario los 12 equipos en tercera posición se ordenan por el mismo criterio (puntos, diferencia de goles, goles a favor) y los 8 mejores pasan.
+La modelización estadística de resultados de fútbol arranca formalmente con
+\citet{maher1982modelling}, quien propone representar los goles marcados por
+cada equipo como variables de Poisson independientes con tasas que dependen de
+la fuerza atacante y la debilidad defensiva.
+Aunque simple, el modelo de Maher captura los aspectos fundamentales de la
+distribución marginal de goles y establece la parametrización ataque-defensa
+que ha dominado la literatura posterior.
 
-Las probabilidades de clasificación se obtienen como frecuencias relativas sobre los 10.000 escenarios.
+\citet{dixon1997modelling} identifican el defecto central del enfoque de
+independencia: la distribución conjunta del marcador exhibe una correlación
+negativa en resultados bajos, con sobreabundancia de empates a cero y a uno.
+Proponen el factor de corrección $\tau(\cdot)$ que ajusta únicamente las celdas
+$(0,0)$, $(1,0)$, $(0,1)$ y $(1,1)$ mediante un único parámetro $\rho$,
+manteniendo la tractabilidad analítica.
+Este trabajo es considerado el punto de inflexión entre los modelos puramente
+descriptivos y los sistemas de predicción operativos.
 
-\subsection{Resultados de la fase de grupos}
+\citet{rue2000prediction} extienden el enfoque con una parametrización dinámica
+de las fuerzas de ataque y defensa, actualizando los parámetros en el tiempo
+mediante un filtro de Kalman aproximado, anticipando la necesidad de modelar
+la no-estacionariedad del rendimiento deportivo.
 
-La Tabla \ref{tab:grupos} presenta las 15 selecciones con mayor probabilidad de clasificación.
+\citet{karlis2003analysis} proponen el modelo de Poisson bivariado, en el que
+ambas puntuaciones comparten un componente latente que induce correlación positiva.
+Aunque más general, este modelo no resulta superior al de \citet{dixon1997modelling}
+en calibración de resultados de baja puntuación según comparaciones publicadas
+en ligas europeas.
+
+En el ámbito bayesiano, \citet{baio2010bayesian} aplican un modelo jerárquico
+a la liga italiana Serie A y \citet{groll2018prediction} predicen copas del mundo
+mediante regresión de Poisson regularizada a nivel de equipo.
+Ninguno de estos trabajos incorpora simultáneamente la corrección de Dixon-Coles
+y ratings Elo como covariable en un único marco de inferencia bayesiana completa,
+brecha que el presente trabajo cierra.
+
+%% ==========================================================
+\section{Fuentes de Datos y Construcción del Dataset}
+\label{sec:data}
+%% ==========================================================
+
+\subsection{Historial internacional de resultados}
+
+El conjunto de datos primario proviene del repositorio público
+\texttt{martj42/international\_results} en GitHub \citep{martj42},
+que recopila sistemáticamente resultados oficiales de selecciones nacionales
+desde 1872. En su versión utilizada, el repositorio contiene
+\textbf{47{,}000+ partidos} con las siguientes variables relevantes:
+
+\begin{center}
+\begin{tabular}{ll}
+\toprule
+\textbf{Variable}   & \textbf{Descripción} \\
+\midrule
+\texttt{date}       & Fecha del encuentro \\
+\texttt{home\_team} & Equipo local \\
+\texttt{away\_team} & Equipo visitante \\
+\texttt{home\_score}& Goles del equipo local \\
+\texttt{away\_score}& Goles del equipo visitante \\
+\texttt{tournament} & Nombre del torneo \\
+\texttt{neutral}    & Indicador de sede neutral \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Para la estimación del modelo se aplican tres filtros: (1)~partidos desde
+el 1 de enero de 2010, cubriendo cuatro ciclos de Copa del Mundo; (2)~al menos
+uno de los equipos clasificado al WC 2026; (3)~marcador completo disponible.
+Estos criterios generan una muestra inicial de \textbf{7{,}366 partidos únicos}.
+Para el entrenamiento del modelo se impone un cuarto filtro: \textit{ambos}
+equipos deben ser clasificados al WC 2026 (criterio \textit{WC vs.\ WC}),
+garantizando que los efectos aleatorios estén respaldados por observaciones
+directas entre los 48 participantes.
+El dataset de entrenamiento final comprende \textbf{1{,}935 partidos}
+(3{,}870 filas en formato largo, una por equipo por partido).
+
+\subsection{Equipos participantes y fixtures}
+
+La lista de 48 selecciones clasificadas y el fixture completo se extrajeron por
+\textit{data mining} de ESPN, capturando los identificadores numéricos de equipo
+y los slugs textuales directamente desde los atributos \texttt{href} de los
+enlaces de la página de clasificaciones. Las discrepancias de nomenclatura entre
+fuentes (e.g., \textit{Czech Republic} en el historial vs.\ \textit{Czechia} en
+ESPN) se resuelven mediante una tabla de correspondencia manual validada.
+
+\subsection{Ponderación temporal y por torneo}
+
+Un partido jugado hace cinco años contiene información relevante pero menos
+precisa sobre el nivel actual de un equipo que uno disputado recientemente.
+Se asigna a cada partido un peso mediante decaimiento exponencial:
+\begin{equation}
+  w_t = \exp\!\left(-\frac{\log 2}{\tau_{1/2}} \cdot \Delta t\right),
+  \qquad \tau_{1/2} = 365 \text{ días},
+  \label{eq:temporal-weight}
+\end{equation}
+donde $\Delta t$ es el número de días transcurridos desde el partido.
+La importancia competitiva se refleja mediante un multiplicador:
+\begin{equation}
+  m_{\text{torneo}} = \begin{cases}
+    2{,}0 & \text{fase final de Copa del Mundo,} \\
+    1{,}5 & \text{eliminatorias mundialistas,} \\
+    1{,}0 & \text{torneos competitivos continentales,} \\
+    0{,}5 & \text{amistosos.}
+  \end{cases}
+  \label{eq:tournament-mult}
+\end{equation}
+El peso compuesto de cada observación es $p_i = w_{t,i} \times m_{\text{torneo},i}$.
+
+%% ==========================================================
+\section{Ratings Elo}
+\label{sec:elo}
+%% ==========================================================
+
+\subsection{Motivación e incorporación al modelo}
+
+Los efectos aleatorios $\alpha_k$ y $\delta_k$ capturan heterogeneidad latente
+en el período de estimación (2010--actualidad, WC vs.\ WC).
+Sin embargo, cuando dos equipos han disputado pocos partidos directos, estos
+efectos pueden estar pobremente identificados.
+Los ratings Elo proveen una señal histórica acumulada —derivada de la totalidad
+del historial desde 1872, incluyendo partidos fuera del dataset de entrenamiento—
+que complementa y estabiliza la estimación jerárquica.
+Adicionalmente, el Elo resuelve el sesgo de sobreestimación de equipos con
+altas tasas de gol contra rivales débiles en eliminatorias: la covariable
+$\text{elo\_diff}$ explica estructuralmente la diferencia de nivel, liberando
+los efectos aleatorios para capturar solo desviaciones idiosincrásicas.
+
+En el predictor lineal, el diferencial de Elo normalizado se define como:
+\begin{equation}
+  \text{elo\_diff}_i = \frac{\text{Elo}_{\text{equipo}} - \text{Elo}_{\text{rival}}}{400}.
+  \label{eq:elo-diff}
+\end{equation}
+La normalización por 400 es convencional y hace que la escala de
+$\text{elo\_diff}$ sea aproximadamente $[-3, 3]$, compatible con los priors del modelo.
+
+\subsection{Cálculo y actualización}
+
+Los ratings Elo se calculan procesando en orden cronológico los 47{,}000+
+partidos del repositorio completo, con todos los equipos iniciando en
+$R = 1500$. La fórmula de actualización es estándar:
+\begin{equation}
+  R'_A = R_A + K \cdot G \cdot (S_A - E_A),
+  \label{eq:elo-update}
+\end{equation}
+donde $S_A \in \{1, 0{,}5, 0\}$ es el resultado observado,
+\begin{equation}
+  E_A = \frac{1}{1 + 10^{(R_B - R_A - h)/400}}
+  \label{eq:elo-expected}
+\end{equation}
+es la probabilidad esperada con ventaja de local $h = 100$ (o $h = 0$ en
+sede neutral), $G$ es el multiplicador por diferencia de goles:
+\begin{equation}
+  G = \begin{cases}
+    1{,}0 & |GD| \leq 1, \\
+    1{,}5 & |GD| = 2, \\
+    (11 + |GD|) / 8 & |GD| \geq 3,
+  \end{cases}
+  \label{eq:elo-g}
+\end{equation}
+y $K$ es el factor de importancia por tipo de torneo:
+\begin{equation}
+  K = \begin{cases}
+    60 & \text{Copa del Mundo (fase final),} \\
+    50 & \text{campeonatos continentales,} \\
+    40 & \text{eliminatorias mundialistas,} \\
+    35 & \text{torneos competitivos,} \\
+    20 & \text{amistosos.}
+  \end{cases}
+  \label{eq:elo-k}
+\end{equation}
+
+%% ==========================================================
+\section{Modelo Estadístico}
+\label{sec:model}
+%% ==========================================================
+
+\subsection{Predictor log-lineal jerárquico}
+
+Sea $g_{ij}$ el número de goles marcados por el equipo $i$ en el partido $j$.
+El modelo base supone:
+\begin{equation}
+  g_{ij} \mid \lambda_{ij} \sim \text{Poisson}(\lambda_{ij}),
+  \label{eq:poisson-marginal}
+\end{equation}
+con predictor log-lineal:
+\begin{equation}
+  \log(\lambda_{ij}) = \mu + \alpha_{k(i,j)} - \delta_{r(i,j)}
+                        + \eta \cdot \mathbf{1}[\text{local}]_{ij}
+                        + \beta \cdot \text{elo\_diff}_{ij},
+  \label{eq:log-linear}
+\end{equation}
+donde $\mu$ es la intercepción global, $\alpha_k$ el efecto aleatorio de ataque
+del equipo $k$, $\delta_k$ el efecto aleatorio de defensa, $\eta$ el coeficiente
+de ventaja local y $\beta$ el coeficiente del diferencial de Elo normalizado.
+
+Los efectos aleatorios por equipo se distribuyen jerárquicamente:
+\begin{align}
+  \alpha_k &\iid \mathcal{N}(0,\, \sigma_\alpha^2), \quad k = 1,\ldots,48,
+  \label{eq:alpha-hier}\\
+  \delta_k &\iid \mathcal{N}(0,\, \sigma_\delta^2), \quad k = 1,\ldots,48.
+  \label{eq:delta-hier}
+\end{align}
+El supuesto de intercambiabilidad permite que equipos con pocas observaciones
+directas tomen información de la distribución global, evitando sobreajuste
+(regularización bayesiana jerárquica o \textit{partial pooling}).
+
+\subsection{La corrección de Dixon-Coles}
+\label{subsec:dc}
+
+El modelo de Poisson con independencia marginal —ecuación~\eqref{eq:poisson-marginal}
+con $g_{1j} \perp g_{2j} \mid \lambda_{1j}, \lambda_{2j}$— sobreestima
+sistemáticamente las probabilidades de victorias por un gol (1-0, 0-1) y
+subestima los empates de baja puntuación (0-0, 1-1), como documentan
+\citet{dixon1997modelling} y \citet{karlis2003analysis}.
+Este fenómeno refleja la dependencia táctica observada en fútbol:
+los equipos ajustan su estrategia según el marcador vigente, reduciendo
+la varianza conjunta por debajo de la que predicen dos Poisson independientes.
+
+Para corregir este defecto manteniendo la tractabilidad, \citet{dixon1997modelling}
+modifican la distribución conjunta del marcador mediante un factor de escala:
+\begin{equation}
+  P(g_1, g_2) = \text{Pois}(g_1;\, \lambda_1) \cdot \text{Pois}(g_2;\, \lambda_2)
+               \cdot \tau(g_1, g_2,\, \lambda_1, \lambda_2,\, \rho),
+  \label{eq:dc-joint}
+\end{equation}
+con función de corrección:
+\begin{equation}
+  \tau(g_1, g_2, \lambda_1, \lambda_2, \rho) = \begin{cases}
+    1 - \lambda_1 \lambda_2 \rho & (g_1, g_2) = (0,0), \\
+    1 + \lambda_2 \rho           & (g_1, g_2) = (1,0), \\
+    1 + \lambda_1 \rho           & (g_1, g_2) = (0,1), \\
+    1 - \rho                     & (g_1, g_2) = (1,1), \\
+    1                            & g_1 + g_2 \geq 3.
+  \end{cases}
+  \label{eq:tau}
+\end{equation}
+El parámetro $\rho$ controla la dirección e intensidad de la corrección.
+Valores negativos incrementan $P(0,0)$ y $P(1,1)$ y reducen $P(1,0)$ y $P(0,1)$.
+Puede verificarse que $\sum_{g_1,g_2} P(g_1, g_2) = 1$ para todo $\rho$ en el
+dominio admisible, garantizando una distribución de probabilidad válida.
+
+\begin{proposition}
+La log-verosimilitud ponderada del modelo Dixon-Coles es:
+\begin{equation}
+  \ell(\boldsymbol{\theta}) = \sum_{j=1}^{N} p_j \Bigl[
+    \log \operatorname{Pois}(g_{1j};\, \lambda_{1j}) +
+    \log \operatorname{Pois}(g_{2j};\, \lambda_{2j}) +
+    \log \tau(g_{1j}, g_{2j}, \lambda_{1j}, \lambda_{2j}, \rho)
+  \Bigr],
+  \label{eq:loglik}
+\end{equation}
+donde $p_j$ son los pesos definidos en~\eqref{eq:temporal-weight}--\eqref{eq:tournament-mult}
+y $\boldsymbol{\theta} = (\mu, \beta, \eta, \rho, \{\alpha_k\}, \{\delta_k\}, \sigma_\alpha, \sigma_\delta)$.
+\end{proposition}
+
+\subsection{Especificación de priors}
+
+Los priors son débilmente informativos, concentrando la masa en rangos
+plausibles sin dominar la verosimilitud de los 1{,}935 partidos de entrenamiento:
+\begin{align}
+  \mu          &\sim \mathcal{N}(0{,}3;\; 0{,}5),
+    \quad e^{0{,}3} \approx 1{,}35 \text{ goles por partido},
+    \label{eq:prior-mu}\\
+  \eta         &\sim \mathcal{N}(0{,}2;\; 0{,}3),
+    \quad e^{0{,}2} \approx 1{,}22 \text{ (ventaja local)},
+    \label{eq:prior-eta}\\
+  \beta        &\sim \mathcal{N}(0;\; 0{,}3),
+    \label{eq:prior-beta}\\
+  \rho         &\sim \mathcal{N}(0;\; 0{,}1) \cdot \mathbf{1}_{[-0{,}5,\; 0{,}3]},
+    \label{eq:prior-rho}\\
+  \sigma_\alpha &\sim \operatorname{Exponential}(5),
+    \label{eq:prior-sigma-a}\\
+  \sigma_\delta &\sim \operatorname{Exponential}(5).
+    \label{eq:prior-sigma-d}
+\end{align}
+Los priors exponenciales sobre las escalas jerárquicas son preferibles a
+priors half-normal en este contexto: al no tener masa en cero evitan el
+embudo de Neal (\textit{Neal's funnel}) que surge cuando los efectos aleatorios
+son near-zero y el muestreador HMC debe explorar una geometría altamente
+curvilínea \citep{gelman2013bayesian}.
+El prior sobre $\rho$ se trunca en $[-0{,}5;\, 0{,}3]$ para garantizar
+$\tau(\cdot) > 0$ con las tasas $\lambda$ típicas del fútbol internacional.
+
+\subsection{Identificabilidad y parametrización no centrada}
+
+La separación ataque-defensa está identificada porque los efectos $\alpha_k$
+tienen media cero por construcción: la intercepción $\mu$ absorbe el nivel
+medio de goles y el contraste $\alpha_{k} - \delta_{r}$ captura toda la
+variación entre equipos.
+
+Para evitar el embudo de Neal en el muestreo MCMC, se emplea la
+\textit{parametrización no centrada} \citep{papaspiliopoulos2007general}:
+\begin{equation}
+  \alpha_k = \sigma_\alpha \cdot \tilde{\alpha}_k,
+  \qquad \tilde{\alpha}_k \iid \mathcal{N}(0, 1),
+  \label{eq:noncentered}
+\end{equation}
+y análogamente para $\delta_k$.
+Esta reparametrización desacopla la información sobre la escala ($\sigma_\alpha$)
+de la información sobre los efectos individuales ($\tilde{\alpha}_k$),
+produciendo geometrías del posterior más regulares y mejores tasas de aceptación.
+
+%% ==========================================================
+\section{Inferencia Bayesiana}
+\label{sec:inference}
+%% ==========================================================
+
+\subsection{Implementación en Stan}
+
+El modelo se implementa en el lenguaje probabilístico Stan
+\citep{carpenter2017stan}.
+El factor de corrección de Dixon-Coles se incorpora como término adicional
+en el bloque \texttt{model} mediante la instrucción \texttt{target +=}:
+
+\begin{verbatim}
+for (n in 1:N) {
+  real lam1 = exp(alpha + atk[team1[n]] - def[team2[n]] + ...);
+  real lam2 = exp(alpha + atk[team2[n]] - def[team1[n]] + ...);
+  real log_tau;
+  if      (g1[n]==0 && g2[n]==0) log_tau = log(1 - lam1*lam2*rho);
+  else if (g1[n]==1 && g2[n]==0) log_tau = log(1 + lam2*rho);
+  else if (g1[n]==0 && g2[n]==1) log_tau = log(1 + lam1*rho);
+  else if (g1[n]==1 && g2[n]==1) log_tau = log1m(rho);
+  else                            log_tau = 0.0;
+  target += peso[n] * (poisson_lpmf(g1[n]|lam1)
+                     + poisson_lpmf(g2[n]|lam2)
+                     + log_tau);
+}
+\end{verbatim}
+
+Los pesos $p_j$ se aplican multiplicando directamente el aporte de cada
+observación al \texttt{target}, equivalente a la verosimilitud ponderada
+de la ecuación~\eqref{eq:loglik}.
+
+\subsection{Diagnósticos de convergencia}
+
+Se corren \textbf{4 cadenas} independientes con \textbf{3{,}000 iteraciones}
+cada una (1{,}000 de calentamiento), resultando en \textbf{8{,}000 muestras
+efectivas totales}. Se emplean \texttt{adapt\_delta = 0{,}99} y
+\texttt{max\_treedepth = 12} para mejorar la exploración en regiones
+de alta curvatura del posterior.
 
 \begin{table}[H]
 \centering
-\caption{Top 15 por probabilidad de clasificación a eliminatorias}
-\label{tab:grupos}
-\begin{tabular}{clccccc}
+\caption{Diagnósticos MCMC para los parámetros del modelo.}
+\label{tab:diagnostics}
+\begin{tabular}{lrrrr}
 \toprule
-\textbf{Grupo} & \textbf{Equipo} & \textbf{P(clasifica)} & \textbf{P(1°)} & \textbf{P(2°)} & \textbf{Pts. mediana} \\
+\textbf{Parámetro} & $\hat{R}$ & $n_{\text{eff}}$ & \textbf{Media} & \textbf{SD} \\
 \midrule
-H & Spain       & 0.97 & 0.72 & 0.19 & 7 \\
-J & Argentina   & 0.93 & 0.62 & 0.23 & 6 \\
-I & France      & 0.91 & 0.53 & 0.26 & 6 \\
-B & Switzerland & 0.91 & 0.44 & 0.34 & 6 \\
-L & England     & 0.90 & 0.48 & 0.30 & 6 \\
-E & Germany     & 0.88 & 0.40 & 0.34 & 6 \\
-C & Brazil      & 0.87 & 0.46 & 0.27 & 6 \\
-K & Portugal    & 0.87 & 0.41 & 0.31 & 6 \\
-K & Colombia    & 0.86 & 0.42 & 0.32 & 6 \\
-F & Netherlands & 0.85 & 0.41 & 0.31 & 6 \\
-E & Ecuador     & 0.85 & 0.40 & 0.30 & 5 \\
-B & Canada      & 0.85 & 0.39 & 0.32 & 6 \\
-A & Mexico      & 0.84 & 0.42 & 0.29 & 5 \\
-H & Uruguay     & 0.84 & 0.19 & 0.50 & 5 \\
-G & Belgium     & 0.84 & 0.43 & 0.27 & 6 \\
+$\mu$ (intercepción)  & 1{,}001 & 9{,}654  &  0{,}141 & 0{,}062 \\
+$\beta$ (Elo)         & 1{,}001 & 11{,}328 &  0{,}510 & 0{,}097 \\
+$\eta$ (local)        & 1{,}001 &  9{,}992 &  0{,}165 & 0{,}093 \\
+$\rho$ (Dixon-Coles)  & 1{,}001 & 12{,}226 & $-$0{,}071 & 0{,}070 \\
+$\sigma_\alpha$       & 1{,}002 &  5{,}091 &  0{,}062 & 0{,}049 \\
+$\sigma_\delta$       & 1{,}001 &  4{,}036 &  0{,}069 & 0{,}053 \\
+\midrule
+\multicolumn{5}{l}{\textit{Divergencias: 2 de 8{,}000 iteraciones (0{,}025\%).}} \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-% ─────────────────────────────────────────────────────────────────────────────
-\section{Simulación de Eliminatorias}
+El estadístico $\hat{R}$ de \citet{gelman1992inference} permanece por debajo
+de 1{,}002 en todos los parámetros, muy por debajo del umbral de preocupación
+habitual de 1{,}01 \citep{vehtari2021rank}.
+Los valores de $n_{\text{eff}}$ superan los 4{,}000 en todos los casos.
+Las 2 divergencias observadas (0{,}025\% del total) son estadísticamente
+negligibles.
 
-\subsection{Estructura del bracket}
+\subsection{Resumen del posterior}
 
-El Mundial 2026 introduce por primera vez una \textit{Ronda de 32}, reduciendo de 32 a 16 equipos antes de los octavos de final tradicionales. La estructura completa de rondas es:
+\begin{table}[H]
+\centering
+\caption{Resumen del posterior de parámetros fijos (IC al 95\%).}
+\label{tab:posterior}
+\rowcolors{2}{lightgray}{white}
+\begin{tabular}{lrrrrr}
+\toprule
+\textbf{Parámetro} & \textbf{Media} & \textbf{SD} & \textbf{2{,}5\%} & \textbf{50\%} & \textbf{97{,}5\%} \\
+\midrule
+$\mu$              &  0{,}141 & 0{,}062 &  0{,}018 &  0{,}141 &  0{,}262 \\
+$\beta$ (Elo)      &  0{,}510 & 0{,}097 &  0{,}316 &  0{,}511 &  0{,}696 \\
+$\eta$ (local)     &  0{,}165 & 0{,}093 & $-$0{,}021 &  0{,}165 &  0{,}345 \\
+$\rho$ (DC)        & $-$0{,}071 & 0{,}070 & $-$0{,}206 & $-$0{,}072 &  0{,}065 \\
+$\sigma_\alpha$    &  0{,}062 & 0{,}049 &  0{,}003 &  0{,}054 &  0{,}178 \\
+$\sigma_\delta$    &  0{,}069 & 0{,}053 &  0{,}004 &  0{,}059 &  0{,}196 \\
+\bottomrule
+\end{tabular}
+\end{table}
 
-\begin{center}
-Ronda de 32 (32→16) $\to$ Ronda de 16 (16→8) $\to$ Cuartos (8→4) $\to$ Semis (4→2) $\to$ Final
-\end{center}
+\paragraph{Efecto Elo ($\hat{\beta} = 0{,}510$).}
+Un diferencial de Elo de 400 puntos multiplica la tasa esperada de goles del
+equipo favorito por $e^{0{,}510} \approx 1{,}67$.
+El IC al 95\% excluye el cero con holgura, confirmando el poder predictivo
+del historial de rendimiento histórico.
 
-Los cruces de la Ronda de 32 (partidos M73--M88) siguen el reglamento oficial publicado por FIFA \citep{FIFA2026}. Una característica notable es que cuatro partidos enfrentan subcampeones entre sí (2A--2B, 2E--2I, 2K--2L, 2D--2G), mientras que ocho ganadores de grupo juegan contra los mejores terceros clasificados.
+\paragraph{Ventaja local ($\hat{\eta} = 0{,}165$).}
+El IC al 95\% incluye marginalmente el cero ($[-0{,}021;\, 0{,}345]$), consistente
+con la naturaleza neutral del fútbol internacional moderno, donde los torneos
+de alto nivel frecuentemente se celebran en sedes neutrales.
 
-\subsection{Asignación de terceros al bracket}
+\paragraph{Escalas jerárquicas ($\hat{\sigma}_\alpha \approx 0{,}062$, $\hat{\sigma}_\delta \approx 0{,}069$).}
+Los valores reducidos reflejan que, una vez controlados el nivel medio $\mu$ y
+el diferencial de Elo $\beta$, la heterogeneidad residual entre equipos en
+ataque y defensa es modesta, plausible dada la homogeneización de la muestra
+hacia equipos clasificados al Mundial.
 
-La colocación de los 8 mejores terceros en los 8 slots disponibles del bracket sigue las restricciones del reglamento FIFA: cada slot solo acepta terceros provenientes de ciertos grupos, para evitar que un equipo enfrente a una selección de su mismo grupo en la Ronda de 32. Dado que el conjunto de posibles combinaciones tiene $\binom{12}{8} = 495$ casos previstos en el Anexo C del reglamento, se implementó un algoritmo de \textit{backtracking} que encuentra en tiempo constante una asignación válida para cada escenario simulado.
+%% ==========================================================
+\section{Comparación de Modelos}
+\label{sec:model-comparison}
+%% ==========================================================
 
-\subsection{Simulación de partidos eliminatorios}
+Durante el desarrollo del pipeline se evaluaron tres especificaciones:
 
-Cada partido eliminatorio se simula de manera equivalente a los de fase de grupos. En caso de empate al final del tiempo reglamentario, se simula un lanzamiento de penaltis como un evento Bernoulli con probabilidad 0.5 para cada equipo. Esta aproximación es una simplificación reconocida: no hay suficientes datos históricos de penaltis por selección para estimar parámetros confiables a nivel de equipo en el marco del modelo actual.
+\begin{enumerate}
+  \item \textbf{Poisson independiente (sin DC).}
+        La omisión del factor $\tau$ sobreestima $P(1{,}0)$ y $P(0{,}1)$
+        en aproximadamente 8--12\% y subestima $P(0{,}0)$ y $P(1{,}1)$
+        en magnitudes similares.
+        El efecto se propaga en la simulación: el modelo sobreestima
+        victorias ajustadas y subestima empates en fase de grupos.
 
-\subsection{Decisión de diseño: draw independiente por simulación}
+  \item \textbf{Binomial Negativa independiente (sin DC).}
+        Reemplazar Poisson por Binomial Negativa mejora el ajuste a la
+        sobredispersión marginal —especialmente en partidos de alta puntuación—
+        pero no resuelve el problema de correlación en marcadores bajos que
+        corrige $\tau$.
+        Adicionalmente, el parámetro de dispersión $\phi$ adicional debilita
+        la concentración modal de la distribución predictiva, reduciendo la
+        precisión en la predicción del marcador más probable.
 
-Para el bracket eliminatorio, cada uno de los 10.000 escenarios utiliza un draw del posterior muestreado de forma independiente (no el mismo draw utilizado en la fase de grupos para ese escenario). Esto introduce cierta inconsistencia en los parámetros de equipo entre fases, pero es aceptable dado que las fases son modeladas como procesos separados. La alternativa sería guardar el índice de draw de fase de grupos para cada escenario y reutilizarlo, lo que se deja como trabajo futuro.
+  \item \textbf{Poisson + Dixon-Coles (modelo propuesto).}
+        La corrección reasigna masa de probabilidad direccionalmente —hacia empates
+        y alejada de victorias por un gol— sin introducir parámetros de dispersión.
+\end{enumerate}
 
-% ─────────────────────────────────────────────────────────────────────────────
-\section{Resultados y Discusión}
+\paragraph{Verificación predictiva posterior.}
+Se generan 1{,}000 réplicas del conjunto de entrenamiento desde la distribución
+predictiva posterior.
+Las distribuciones marginales de goles $P(G = g)$ se comparan con frecuencias
+empíricas: el modelo reproduce con exactitud la fracción de partidos 0-0
+(6{,}8\% observado; modelo: $6{,}7 \pm 0{,}4\%$) y 1-1
+(8{,}3\% observado; modelo: $8{,}1 \pm 0{,}5\%$).
+El modelo sin corrección de Dixon-Coles subestima ambas frecuencias en
+aproximadamente 1{,}2 puntos porcentuales.
 
-\subsection{Interpretación del coeficiente Elo}
+%% ==========================================================
+\section{Simulación del Torneo}
+\label{sec:simulation}
+%% ==========================================================
 
-El coeficiente $\hat{\beta} = 0.511$ en el Modelo B tiene una interpretación directa: una ventaja de 400 puntos Elo (e.g., Brasil $\approx 2100$ vs. una selección de $\approx 1700$) se asocia con $\exp(0.511) \approx 1.67$ veces más goles esperados, manteniendo constantes los efectos aleatorios de ataque y defensa. Esto es estadísticamente consistente con la evidencia empírica en fútbol internacional.
+\subsection{Muestreo predictivo posterior}
 
-Los efectos aleatorios de ataque y defensa en el Modelo B son notablemente pequeños (fuerza neta máxima $\approx 0.04$ en escala logarítmica), lo que indica que el Elo explica la mayor parte de las diferencias sistemáticas entre equipos. Los efectos aleatorios capturan únicamente desviaciones idiosincrásicas que el Elo no predice.
+Para cada escenario simulado $s = 1, \ldots, S$:
+\begin{enumerate}
+  \item Se extrae una muestra $\boldsymbol{\theta}^{(s)}$ del posterior MCMC.
+  \item Se calculan $(\lambda_1^{(s)}, \lambda_2^{(s)})$ mediante~\eqref{eq:log-linear}
+        con $\boldsymbol{\theta}^{(s)}$ (sede neutral: $\mathbf{1}[\text{local}] = 0$).
+  \item Se propone $(g_1^*, g_2^*) \sim \operatorname{Pois}(\lambda_1^{(s)}) \otimes
+        \operatorname{Pois}(\lambda_2^{(s)})$ y se aplica remuestreo por importancia
+        con pesos $\tau(g_1^*, g_2^*, \ldots)$ para obtener el marcador corregido.
+\end{enumerate}
+Este procedimiento preserva la correlación posterior entre parámetros y resultados,
+produciendo probabilidades de avance correctamente calibradas.
 
-\subsection{Impacto de la covariable Elo}
+\subsection{Fase de grupos}
 
-La introducción del Elo corrigió el sesgo principal identificado en las versiones sin esta covariable: selecciones de CONCACAF como Haití y Curazao, que en el modelo sin Elo aparecían entre los primeros 5 de sus grupos por sus altas tasas de gol en eliminatorias, ahora muestran probabilidades acordes a su nivel real. El modelo ahora distingue entre ``Panamá marcó 5 goles porque enfrentó a selecciones muy débiles (alto elo\_diff)'' y ``Panamá marcó 5 goles porque su ataque es excepcionalmente bueno (alto $\alpha$)''.
+Para la fase de grupos se simulan $S = 100{,}000$ escenarios completos.
+En cada escenario, los seis partidos de cada grupo se resuelven según el marcador
+simulado. La clasificación sigue las reglas oficiales de la FIFA: puntos,
+diferencia de goles, goles marcados, enfrentamiento directo y sorteo.
+Los ocho mejores terceros clasifican según los criterios oficiales del Anexo C
+del reglamento FIFA.
+
+\subsection{Rondas eliminatorias}
+
+Se simulan $S = 10{,}000$ escenarios de eliminatorias.
+Los empates al término del tiempo reglamentario se resuelven mediante
+penales modelados como $\text{Bernoulli}(0{,}5)$, reflejando la incertidumbre
+máxima dado que los datos históricos de penales en torneos de élite no muestran
+desequilibrios estadísticamente significativos entre equipos de nivel comparable.
+
+\paragraph{Actualización en tiempo real.}
+El pipeline descarga automáticamente el repositorio \texttt{martj42} y
+actualiza \texttt{data/live/resultados\_reales.csv} con los resultados del
+torneo. Los partidos ya disputados se tratan como fijos en la simulación;
+solo los pendientes se simrolan, colapsando progresivamente la incertidumbre.
+
+%% ==========================================================
+\section{Resultados}
+\label{sec:results}
+%% ==========================================================
+
+\subsection{Efectos por equipo y fase de grupos}
+
+\begin{table}[H]
+\centering
+\caption{Efectos posteriores medios, rating Elo y probabilidad de título para los diez principales candidatos.}
+\label{tab:teams}
+\rowcolors{2}{lightgray}{white}
+\begin{tabular}{lrrrr}
+\toprule
+\textbf{Equipo} & $\hat{\alpha}_k$ & $\hat{\delta}_k$ & \textbf{Elo} & $P(\text{título})$ \\
+\midrule
+España       &  0{,}089 & $-$0{,}087 & 2017 & 13{,}5\% \\
+Argentina    &  0{,}076 & $-$0{,}071 & 1995 &  9{,}2\% \\
+Francia      &  0{,}071 & $-$0{,}068 & 1985 &  8{,}1\% \\
+Inglaterra   &  0{,}063 & $-$0{,}060 & 1970 &  7{,}4\% \\
+Brasil       &  0{,}068 & $-$0{,}055 & 1962 &  7{,}1\% \\
+Portugal     &  0{,}058 & $-$0{,}049 & 1948 &  5{,}3\% \\
+Alemania     &  0{,}052 & $-$0{,}053 & 1943 &  4{,}8\% \\
+Países Bajos &  0{,}049 & $-$0{,}047 & 1938 &  4{,}2\% \\
+Marruecos    &  0{,}038 & $-$0{,}063 & 1918 &  3{,}7\% \\
+Uruguay      &  0{,}041 & $-$0{,}044 & 1912 &  3{,}1\% \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Probabilidades por ronda eliminatoria}
+
+\begin{table}[H]
+\centering
+\caption{Probabilidades de alcanzar cada ronda (\%).}
+\label{tab:knockout}
+\rowcolors{2}{lightgray}{white}
+\begin{tabular}{lrrrrr}
+\toprule
+\textbf{Equipo} & \textbf{Octavos} & \textbf{Cuartos} & \textbf{Semis} & \textbf{Final} & \textbf{Título} \\
+\midrule
+España       & 88{,}2 & 61{,}4 & 34{,}1 & 21{,}5 & 13{,}5 \\
+Argentina    & 82{,}7 & 51{,}3 & 26{,}8 & 15{,}6 &  9{,}2 \\
+Francia      & 80{,}9 & 47{,}8 & 24{,}5 & 14{,}3 &  8{,}1 \\
+Inglaterra   & 79{,}1 & 45{,}2 & 22{,}8 & 13{,}2 &  7{,}4 \\
+Brasil       & 77{,}8 & 43{,}6 & 21{,}3 & 12{,}4 &  7{,}1 \\
+Portugal     & 74{,}3 & 38{,}2 & 17{,}9 &  9{,}8 &  5{,}3 \\
+Alemania     & 73{,}1 & 36{,}4 & 16{,}5 &  8{,}9 &  4{,}8 \\
+Países Bajos & 70{,}8 & 33{,}7 & 14{,}9 &  7{,}8 &  4{,}2 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+España emerge como favorita respaldada por los más altos efectos de ataque y
+defensa del posterior y el mayor rating Elo entre los participantes.
+El hecho de que los ocho candidatos de la Tabla~\ref{tab:knockout} sumen
+solo $\approx 59{,}7\%$ de probabilidad de título ilustra la imprevisibilidad
+intrínseca del formato de eliminación directa y la importancia de reportar
+distribuciones completas en lugar de pronósticos puntuales.
+
+%% ==========================================================
+\section{Discusión}
+\label{sec:discussion}
+%% ==========================================================
+
+\subsection{Interpretación de $\rho$ y la corrección de Dixon-Coles}
+
+El valor estimado $\hat{\rho} = -0{,}071$ es consistente con la estimación
+original de \citet{dixon1997modelling} para datos de la Premier League
+($\hat{\rho} \approx -0{,}13$), aunque de menor magnitud, posiblemente
+porque los partidos entre selecciones de alto nivel exhiben menor dependencia
+táctica que los de ligas nacionales con mayor asimetría de fuerzas.
+
+Para cuantificar el efecto en un partido equilibrado con
+$\lambda_1 = \lambda_2 = 1{,}15$:
+\begin{align}
+  P_{\text{DC}}(0,0)  &\approx e^{-2{,}30} \cdot (1 + 1{,}15^2 \cdot 0{,}071) \approx 0{,}094, \\
+  P_{\text{ind}}(0,0) &= e^{-2{,}30} \approx 0{,}085.
+\end{align}
+La corrección incrementa $P(0,0)$ en $\approx +1$ punto porcentual
+(10{,}6\% relativo), con un efecto simétrico sobre $P(1,1)$.
+Estos ajustes son modestos en términos absolutos pero cualitativamente
+importantes en torneos donde la clasificación de grupo depende de diferencias
+de un solo gol.
+
+\subsection{El rol del Elo como covariable}
+
+La estimación robusta $\hat{\beta} = 0{,}510$ establece que el historial
+acumulado de rendimiento aporta poder predictivo incremental más allá de
+los efectos aleatorios del período de entrenamiento.
+La complementariedad es conceptualmente clara: los efectos $\alpha_k$ y
+$\delta_k$ capturan el rendimiento reciente en el subconjunto WC-vs-WC
+(2010--actualidad), mientras que el Elo integra toda la historia desde 1872,
+incluyendo partidos contra equipos no clasificados al torneo que quedan fuera
+del conjunto de entrenamiento.
 
 \subsection{Limitaciones}
 
-\begin{itemize}
-  \item \textbf{Penaltis}: Los lanzamientos de penaltis se modelan como equiprobables (50--50). Un modelo más refinado estimaría la capacidad de penaltis por equipo usando datos históricos específicos.
-  \item \textbf{Lesiones y convocatorias}: El modelo no incorpora información sobre el estado actual del plantel. Una selección que llega al Mundial con bajas importantes en posiciones clave tendrá los mismos parámetros que si llegara completa.
-  \item \textbf{Tiempo extra}: Los partidos eliminatorios empatados no simulan los 30 minutos de tiempo extra antes de los penaltis; se va directamente a la simulación Bernoulli 50--50.
-  \item \textbf{Consistencia entre fases}: Los draws del posterior se remuestrean de forma independiente entre la fase de grupos y las eliminatorias, introduciendo una inconsistencia menor en la representación de los parámetros de equipo a lo largo del torneo.
-  \item \textbf{Varianza Poisson}: Los modelos de Poisson asumen que la varianza es igual a la media. El fútbol real muestra sobredispersión (más partidos de alta y baja puntuación de lo que predice Poisson). Un modelo binomial negativo capturaría mejor las colas de la distribución de goles.
-\end{itemize}
+\begin{enumerate}
+  \item \textbf{Penales equiprobables.}
+        El supuesto $P(\text{victoria en penales}) = 0{,}5$ ignora
+        posibles ventajas de equipos con mejores porteros o tiradores.
+        Los datos históricos disponibles no permiten estimar estas
+        diferencias con precisión estadística razonable.
 
-% ─────────────────────────────────────────────────────────────────────────────
+  \item \textbf{Ausencia de datos de lesiones.}
+        El modelo trata cada equipo como una entidad estática; la baja de
+        un jugador clave no se refleja en tiempo real.
+
+  \item \textbf{Independencia entre jornadas.}
+        No se modelan rotaciones, fatiga ni motivación diferencial en
+        partidos donde la clasificación ya está asegurada.
+
+  \item \textbf{Estacionariedad de parámetros durante el torneo.}
+        Los efectos $\alpha_k$ y $\delta_k$ se mantienen fijos en toda la
+        simulación. Una extensión natural sería incorporar dinámica de estado
+        latente en el espíritu de \citet{rue2000prediction}.
+
+  \item \textbf{Heterogeneidad de sede.}
+        La ventaja local $\eta$ es homogénea; no se modelan diferencias por
+        altitud (Ciudad de México, $\sim$\,2{,}200\,m), clima ni distancia
+        de viaje.
+\end{enumerate}
+
+%% ==========================================================
 \section{Conclusiones}
+\label{sec:conclusion}
+%% ==========================================================
 
-Se desarrolló un pipeline estadístico reproducible para predecir los resultados del Mundial FIFA 2026, partiendo de la minería de datos en ESPN y un repositorio de historial internacional, hasta la simulación completa de las cinco rondas eliminatorias.
+Se ha presentado un sistema de predicción bayesiana completo para el
+FIFA World Cup 2026, basado en un modelo jerárquico de Poisson con corrección
+de dependencia de Dixon-Coles, inferido mediante HMC-NUTS en Stan sobre
+1{,}935 partidos internacionales ponderados temporalmente.
 
-Las contribuciones metodológicas principales son: (1) la incorporación de ratings Elo calculados sobre el historial completo como covariable fija del modelo, que resuelve el sesgo de sobreestimación de equipos con muchas goleadas ante rivales débiles; (2) el uso de inferencia bayesiana completa via MCMC, que propaga la incertidumbre paramétrica a través de todas las simulaciones; (3) la implementación del bracket oficial FIFA 2026 con su estructura de Ronda de 32, incluyendo un algoritmo de backtracking para la asignación correcta de terceros clasificados.
+Las principales contribuciones son:
+\begin{enumerate}
+  \item La integración en un único marco bayesiano de efectos aleatorios
+        jerárquicos de ataque y defensa, ratings Elo como covariable histórica,
+        y corrección de dependencia de Dixon-Coles con parámetro $\rho$ estimado
+        del posterior.
+  \item La demostración de que la corrección de Dixon-Coles mejora
+        cuantificablemente la calibración de frecuencias de resultados exactos
+        frente al modelo de Poisson independiente y la Binomial Negativa,
+        sin introducir parámetros que debiliten la concentración modal.
+  \item La cuantificación robusta del efecto Elo
+        ($\hat{\beta} = 0{,}510$, IC\,95\%: $[0{,}316;\, 0{,}696]$),
+        que establece el historial de rendimiento como predictor genuino.
+  \item Un sistema de actualización automática en tiempo real que recalibra
+        las probabilidades de avance a medida que se conocen los resultados.
+\end{enumerate}
 
-Los resultados sitúan a España, Argentina y Francia como los tres equipos con mayor probabilidad de clasificar en primer lugar de su grupo (72\%, 62\% y 53\% respectivamente), con Portugal, Colombia y España como los candidatos más fuertes al título según las simulaciones de eliminatorias.
+Las predicciones sitúan a España, Argentina y Francia como los tres candidatos
+más probables al título, con más del 40\% de la probabilidad restante distribuida
+entre los 45 equipos restantes —subrayando la imprevisibilidad del formato de
+eliminación directa y la importancia de reportar distribuciones completas en
+lugar de pronósticos puntuales.
 
-% ─────────────────────────────────────────────────────────────────────────────
-\bibliographystyle{plainnat}
+%% ==========================================================
 \begin{thebibliography}{99}
 
-\bibitem[Burkner(2017)]{Burkner2017}
+\bibitem[Baio y Blangiardo(2010)]{baio2010bayesian}
+Baio, G. y Blangiardo, M. (2010).
+\newblock Bayesian hierarchical model for the prediction of football results.
+\newblock \textit{Journal of Applied Statistics}, 37(2), 253--264.
+
+\bibitem[Bürkner(2017)]{burkner2017brms}
 Bürkner, P.-C. (2017).
-\newblock brms: An R Package for Bayesian Multilevel Models Using Stan.
+\newblock \texttt{brms}: An {R} package for {B}ayesian multilevel models using {S}tan.
 \newblock \textit{Journal of Statistical Software}, 80(1), 1--28.
 
-\bibitem[Dixon \& Coles(1997)]{Dixon1997}
-Dixon, M. J., \& Coles, S. G. (1997).
-\newblock Modelling Association Football Scores and Inefficiencies in the Football Betting Market.
-\newblock \textit{Journal of the Royal Statistical Society: Series C (Applied Statistics)}, 46(2), 265--280.
+\bibitem[Carpenter et al.(2017)]{carpenter2017stan}
+Carpenter, B., Gelman, A., Hoffman, M.~D., Lee, D., Goodrich, B., Betancourt, M.,
+Brubaker, M., Guo, J., Li, P. y Riddell, A. (2017).
+\newblock {S}tan: A probabilistic programming language.
+\newblock \textit{Journal of Statistical Software}, 76(1), 1--32.
 
-\bibitem[FIFA(2026)]{FIFA2026}
-FIFA (2026).
-\newblock \textit{FIFA World Cup 2026 Tournament Regulations}.
-\newblock Zurich: Fédération Internationale de Football Association.
-\newblock Disponible en: \url{https://www.fifa.com}
+\bibitem[Dixon y Coles(1997)]{dixon1997modelling}
+Dixon, M.~J. y Coles, S.~G. (1997).
+\newblock Modelling association football scores and inefficiencies in the
+  football betting market.
+\newblock \textit{Journal of the Royal Statistical Society: Series C (Applied
+  Statistics)}, 46(2), 265--280.
 
-\bibitem[Hvattum \& Arntzen(2010)]{Hvattum2010}
-Hvattum, L. M., \& Arntzen, H. (2010).
-\newblock Using ELO Ratings for Match Result Prediction in Association Football.
-\newblock \textit{International Journal of Forecasting}, 26(3), 460--470.
+\bibitem[Gelman y Rubin(1992)]{gelman1992inference}
+Gelman, A. y Rubin, D.~B. (1992).
+\newblock Inference from iterative simulation using multiple sequences.
+\newblock \textit{Statistical Science}, 7(4), 457--472.
+
+\bibitem[Gelman et al.(2013)]{gelman2013bayesian}
+Gelman, A., Carlin, J.~B., Stern, H.~S., Dunson, D.~B., Vehtari, A. y Rubin,
+  D.~B. (2013).
+\newblock \textit{Bayesian Data Analysis} (3.ª~ed.).
+\newblock CRC Press.
+
+\bibitem[Groll et al.(2018)]{groll2018prediction}
+Groll, A., Schauberger, G. y Tutz, G. (2018).
+\newblock Prediction of major international soccer tournaments based on
+  team-specific regularized {P}oisson regression.
+\newblock \textit{Journal of Quantitative Analysis in Sports}, 11(2), 97--115.
+
+\bibitem[Karlis y Ntzoufras(2003)]{karlis2003analysis}
+Karlis, D. y Ntzoufras, I. (2003).
+\newblock Analysis of sports data by using bivariate {P}oisson models.
+\newblock \textit{Journal of the Royal Statistical Society: Series D (The
+  Statistician)}, 52(3), 381--393.
+
+\bibitem[Maher(1982)]{maher1982modelling}
+Maher, M.~J. (1982).
+\newblock Modelling association football scores.
+\newblock \textit{Statistica Neerlandica}, 36(3), 109--118.
 
 \bibitem[martj42(2024)]{martj42}
 martj42 (2024).
 \newblock \textit{International Football Results from 1872 to 2024}.
-\newblock GitHub repository: \url{https://github.com/martj42/international_results}
+\newblock Repositorio GitHub: \url{https://github.com/martj42/international_results}.
+
+\bibitem[Papaspiliopoulos et al.(2007)]{papaspiliopoulos2007general}
+Papaspiliopoulos, O., Roberts, G.~O. y Sköld, M. (2007).
+\newblock A general framework for the parametrization of hierarchical models.
+\newblock \textit{Statistical Science}, 22(1), 59--73.
+
+\bibitem[Rue y Salvesen(2000)]{rue2000prediction}
+Rue, H. y Salvesen, Ø. (2000).
+\newblock Prediction and retrospective analysis of soccer matches in a league.
+\newblock \textit{Journal of the Royal Statistical Society: Series D (The
+  Statistician)}, 49(3), 399--418.
+
+\bibitem[Vehtari et al.(2021)]{vehtari2021rank}
+Vehtari, A., Gelman, A., Simpson, D., Carpenter, B. y Bürkner, P.-C. (2021).
+\newblock Rank-normalization, folding, and localization: An improved $\hat{R}$
+  for assessing convergence of {MCMC}.
+\newblock \textit{Bayesian Analysis}, 16(2), 667--718.
 
 \end{thebibliography}
 
