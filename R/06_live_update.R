@@ -410,7 +410,7 @@ sims_viz <- bind_rows(
 )
 
 plot_score_heatmap_live <- function(t1, t2, grp, sub_sims,
-                                    real_g1 = NA, real_g2 = NA, max_g = 10) {
+                                    real_g1 = NA, real_g2 = NA, max_g = 7) {
   g1c   <- pmin(sub_sims$g1, max_g)
   g2c   <- pmin(sub_sims$g2, max_g)
   tab   <- table(factor(g1c, levels = 0:max_g), factor(g2c, levels = 0:max_g))
@@ -478,7 +478,7 @@ for (grp in sort(unique(all_matches$group))) {
     real_g2 <- if (df_grp$jugado[i]) df_grp$g2[i] else NA
 
     plot_score_heatmap_live(t1, t2, grp, sub_sims,
-                            real_g1 = real_g1, real_g2 = real_g2, max_g = 10)
+                            real_g1 = real_g1, real_g2 = real_g2, max_g = 7)
   }
 
   n_jug <- sum(df_grp$jugado)
