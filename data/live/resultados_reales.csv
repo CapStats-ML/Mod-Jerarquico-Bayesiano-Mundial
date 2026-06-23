@@ -48,16 +48,16 @@ H,Cape Verde,Saudi Arabia,NA,NA
 H,Cape Verde,Uruguay,2,2
 H,Saudi Arabia,Uruguay,1,1
 I,France,Senegal,3,1
-I,France,Iraq,NA,NA
+I,France,Iraq,3,0
 I,France,Norway,NA,NA
 I,Senegal,Iraq,NA,NA
-I,Senegal,Norway,NA,NA
+I,Senegal,Norway,2,3
 I,Iraq,Norway,1,4
 J,Argentina,Algeria,3,0
-J,Argentina,Austria,NA,NA
+J,Argentina,Austria,2,0
 J,Argentina,Jordan,NA,NA
 J,Algeria,Austria,NA,NA
-J,Algeria,Jordan,NA,NA
+J,Algeria,Jordan,2,1
 J,Austria,Jordan,3,1
 K,Portugal,DR Congo,1,1
 K,Portugal,Uzbekistan,NA,NA
