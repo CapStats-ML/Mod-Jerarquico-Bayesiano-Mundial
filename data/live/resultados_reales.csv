@@ -1,20 +1,20 @@
 group,equipo1,equipo2,g1,g2
 A,Mexico,South Korea,1,0
-A,Mexico,Czech Republic,NA,NA
+A,Mexico,Czech Republic,3,0
 A,Mexico,South Africa,2,0
 A,South Korea,Czech Republic,2,1
-A,South Korea,South Africa,NA,NA
+A,South Korea,South Africa,0,1
 A,Czech Republic,South Africa,1,1
 B,Canada,Bosnia and Herzegovina,1,1
 B,Canada,Qatar,6,0
-B,Canada,Switzerland,NA,NA
-B,Bosnia and Herzegovina,Qatar,NA,NA
+B,Canada,Switzerland,1,2
+B,Bosnia and Herzegovina,Qatar,3,1
 B,Bosnia and Herzegovina,Switzerland,1,4
 B,Qatar,Switzerland,1,1
 C,Brazil,Morocco,1,1
 C,Brazil,Haiti,3,0
-C,Brazil,Scotland,NA,NA
-C,Morocco,Haiti,NA,NA
+C,Brazil,Scotland,3,0
+C,Morocco,Haiti,4,2
 C,Morocco,Scotland,1,0
 C,Haiti,Scotland,0,1
 D,United States,Paraguay,4,1
