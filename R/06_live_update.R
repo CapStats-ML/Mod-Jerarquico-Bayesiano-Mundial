@@ -406,7 +406,10 @@ if (nrow(jugados) > 0) {
 
 sims_viz <- bind_rows(
   sims_jugados_viz,
-  sims_pendientes |> select(sim_id, group, equipo1, equipo2, g1, g2)
+  if (nrow(sims_pendientes) > 0)
+    sims_pendientes |> select(sim_id, group, equipo1, equipo2, g1, g2)
+  else
+    tibble()
 )
 
 plot_score_heatmap_live <- function(t1, t2, grp, sub_sims,

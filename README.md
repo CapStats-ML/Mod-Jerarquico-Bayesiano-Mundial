@@ -13,15 +13,17 @@ Sistema completo de predicción del FIFA World Cup 2026. Combina **47 000+ parti
 
 ## Resultados destacados
 
-| Equipo | P(Campeón) | P(Final) | P(Semifinal) | P(Clasifica grupos) |
-|--------|----------:|--------:|-------------:|--------------------:|
-| Spain | 13.5% | 21.5% | 34.1% | 91.2% |
-| Argentina | 9.2% | 15.6% | 26.8% | 88.4% |
-| France | 8.1% | 14.3% | 24.5% | 87.1% |
-| England | 5.6% | 10.3% | 18.9% | 83.6% |
-| Portugal | 5.1% | 9.3% | 17.2% | 82.0% |
+**Fase de grupos completada — probabilidades de eliminatorias actualizadas con clasificados reales.**
 
-> Probabilidades basadas en 100 000 simulaciones de fase de grupos + 10 000 de eliminatorias.  
+| Equipo | P(Campeón) | P(Final) | P(Semifinal) | P(Cuartos) |
+|--------|----------:|--------:|-------------:|----------:|
+| Argentina | 13.6% | 23.6% | 23.6% | 38.1% |
+| Spain | 13.0% | 20.8% | 20.8% | 31.7% |
+| France | 8.6% | 14.7% | 14.7% | 26.3% |
+| England | 6.8% | 13.9% | 13.9% | 25.6% |
+| Colombia | 6.3% | 12.9% | 12.9% | 24.2% |
+
+> Probabilidades basadas en 10 000 simulaciones Monte Carlo con el modelo Dixon-Coles.  
 > Tabla completa en [`output/tables/knockout_probs.csv`](output/tables/knockout_probs.csv).
 
 ---
@@ -153,15 +155,16 @@ Divergencias: 2 / 8 000 (0.025%)
 ## Pipeline
 
 ```
-01_scraping.R      Descarga historial (martj42), equipos y fixtures (ESPN)
-02_processing.R    Calcula Elo, aplica pesos, construye dataset en formato largo
-03_model.R         Ajusta modelos A y B con brms (NegBin — referencia)
-03b_model_dc.R     Ajusta modelo Dixon-Coles en Stan  ← modelo activo
-04_simulation.R    Simula 100 000 escenarios de fase de grupos
-05_knockout.R      Simula 10 000 escenarios de eliminatorias
-06_live_update.R   Auto-descarga resultados reales y re-simula pendientes
-07_bracket_viz.R   Genera bracket visual PNG (R base, 2 400 × 1 256 px)
-08_dag.R           Genera DAG del modelo (R base, 1 600 × 1 000 px)
+01_scraping.R         Descarga historial (martj42), equipos y fixtures (ESPN)
+02_processing.R       Calcula Elo, aplica pesos, construye dataset en formato largo
+03_model.R            Ajusta modelos A y B con brms (NegBin — referencia)
+03b_model_dc.R        Ajusta modelo Dixon-Coles en Stan  ← modelo activo
+04_simulation.R       Simula 100 000 escenarios de fase de grupos
+05_knockout.R         Simula 10 000 escenarios de eliminatorias (setup inicial)
+06_live_update.R      Auto-descarga resultados reales y re-simula fase de grupos
+06b_knockout_live.R   Live update para fase eliminatoria  ← usar desde R32 en adelante
+07_bracket_viz.R      Genera bracket visual PNG (R base, 2 400 × 1 256 px)
+08_dag.R              Genera DAG del modelo (R base, 1 600 × 1 000 px)
 ```
 
 ### Primera ejecución
@@ -176,13 +179,18 @@ source("R/07_bracket_viz.R")  # genera bracket PNG
 source("R/08_dag.R")          # genera DAG
 ```
 
-### Actualización durante el torneo
+### Actualización durante la fase de grupos
 
 ```r
-# Basta con esto — los resultados se descargan automáticamente de martj42
+# Descarga resultados reales y re-simula partidos pendientes
 source("R/06_live_update.R")
-source("R/05_knockout.R")
-source("R/07_bracket_viz.R")
+```
+
+### Actualización durante la fase eliminatoria
+
+```r
+# Usa clasificados reales, lee resultados de martj42, simula lo que resta
+source("R/06b_knockout_live.R")   # actualiza bracket_ml.rds, knockout_probs.csv y bracket PNG
 ```
 
 ---
@@ -196,8 +204,9 @@ source("R/07_bracket_viz.R")
 │   ├── 03_model.R             modelo brms NegBin (referencia)
 │   ├── 03b_model_dc.R         modelo Stan Dixon-Coles  ← activo
 │   ├── 04_simulation.R        simulación fase de grupos
-│   ├── 05_knockout.R          simulación eliminatorias
-│   ├── 06_live_update.R       actualización en tiempo real
+│   ├── 05_knockout.R          simulación eliminatorias (setup inicial)
+│   ├── 06_live_update.R       live update fase de grupos
+│   ├── 06b_knockout_live.R    live update fase eliminatoria
 │   ├── 07_bracket_viz.R       visualización bracket
 │   └── 08_dag.R               DAG del modelo
 ├── stan/
